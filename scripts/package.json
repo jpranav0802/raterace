@@ -1,0 +1,17 @@
+{
+  "name": "@raterace/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "tsx deploy.ts",
+    "smoke": "tsx smoke.ts",
+    "demo:gamma": "tsx demo-gamma.ts",
+    "demo:rejections": "tsx demo-rejections.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@raterace/shared": "*",
+    "@stellar/stellar-sdk": "17.4.0"
+  }
+}
