@@ -1,0 +1,17 @@
+[package]
+name = "mock-oracle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+oracle-interface = { path = "../oracle_interface" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
