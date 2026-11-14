@@ -8,10 +8,14 @@
     "smoke": "tsx smoke.ts",
     "demo:gamma": "tsx demo-gamma.ts",
     "demo:rejections": "tsx demo-rejections.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "check": "tsx check.ts",
+    "try-quote": "tsx try-quote.ts"
   },
   "dependencies": {
     "@raterace/shared": "*",
-    "@stellar/stellar-sdk": "17.4.0"
+    "@stellar/stellar-sdk": "17.4.0",
+    "raterace-client": "*",
+    "oracle-client": "*"
   }
 }

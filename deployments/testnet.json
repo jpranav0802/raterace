@@ -1,0 +1,42 @@
+{
+  "network": "testnet",
+  "deployedAt": "2026-11-14T22:41:46.976Z",
+  "deployLedger": 5734467,
+  "contracts": {
+    "raterace": "CDAEDQWI6LHZ6UQEKYLYRC2O2I27LVEMTCKL2LHSGNS3GZMTG7LXJKG5",
+    "oracle": "CAMQVALQJM6KY3YVLLB5IA5D5FH4HZU4LRZRCK27MET55SUIOWSPFBS5",
+    "usdc": "CAVI5P5IMIZZC54O3GVBJUUQAGLIJXRG5VY3E56IMYQDQ6XVCIUMFCDX"
+  },
+  "usdc": {
+    "code": "USDC",
+    "issuer": "GCO5ZL6WHM6YE5J7TQCB45NMTVRWFECXYVLD7REIIBBRZN25FMUSMLVP"
+  },
+  "accounts": {
+    "admin": "GDV2POJIEVS3MQMEE66XBONEZCYC24LUH2MSGRPKRDLBX7MGOR6AJKOA",
+    "sponsor": "GAINRRR2XIPUKJJCOE2UUSYAATS235Z2RTOGF6KMOV7XM3NEJCNX23O7",
+    "demoSender": "GCHYWANS5BX3QH7I47HO76MA5IZ5WDWI6CPE3BRHR64S4WTEXJ6ISZS5"
+  },
+  "anchors": [
+    {
+      "name": "alpha",
+      "displayName": "Alpha",
+      "address": "GBPPTAYK3XMQCQFFC3IAA7EEUQ7AIJ6GTE3HHGEV3BJAZTP2F2TF7AJA",
+      "signingKeyHex": "29841a3faddd113a1a28bc22305ea200a44382df7574e59bf056d01cb3aa03ab",
+      "quoteUrl": "http://localhost:8801"
+    },
+    {
+      "name": "beta",
+      "displayName": "Beta",
+      "address": "GALT4KOIYORNPJQTRKNLDN6XSS4YMXCQ5NDXLI6SSHX44PSNSHVBPDTJ",
+      "signingKeyHex": "fd047c150447e17bfb7668c040c8fef820bfa0f5b4625ad19477cabf99376dab",
+      "quoteUrl": "http://localhost:8802"
+    },
+    {
+      "name": "gamma",
+      "displayName": "Gamma",
+      "address": "GB5QJAKPRWIMFVDPZLHPS7NV72QJG574F7OG4YDIOX2QA3R7MKZUMJKT",
+      "signingKeyHex": "b3bbd62baf74f73381fecfa4f9ed483b6c784809545895b4c052de6b8ef025ec",
+      "quoteUrl": "http://localhost:8803"
+    }
+  ]
+}
