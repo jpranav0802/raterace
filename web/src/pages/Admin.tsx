@@ -1,9 +1,6 @@
-// Owner: Pranav (issue #20). See docs/BUILD_PLAN.md.
+// Owner: Pranav (issue #20). Build this page from the components shown on /design.
+import { PageHeader } from "@/components/PageHeader";
+
 export default function Admin() {
-  return (
-    <section className="card">
-      <h1>Admin</h1>
-      <p className="muted">Coming soon: approve providers and resolve problems.</p>
-    </section>
-  );
+  return <PageHeader title="Admin" lead="This screen is being built." />;
 }
