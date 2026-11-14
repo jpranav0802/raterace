@@ -5,8 +5,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node.ts"
+    "./node": "./src/node.ts",
+    "./chain": "./src/chain.ts"
   },
-  "scripts": { "typecheck": "tsc --noEmit -p ." },
-  "dependencies": { "dotenv": "^18.0.10" }
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "dotenv": "^18.0.10",
+    "raterace-client": "*",
+    "oracle-client": "*"
+  }
 }
