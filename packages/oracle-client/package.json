@@ -1,0 +1,11 @@
+{
+  "version": "0.0.0",
+  "name": "oracle-client",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@stellar/stellar-sdk": "17.4.0",
+    "buffer": "6.0.3"
+  },
+  "private": true
+}
