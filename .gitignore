@@ -1,0 +1,9 @@
+RateRace_full_handoff.md
+.env
+.env.*
+!.env.example
+node_modules/
+target/
+dist/
+.DS_Store
+.stellar/
