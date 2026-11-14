@@ -1,0 +1,902 @@
+# RateRace Build Plan (single source of truth for the build)
+
+Written Sat 14 Nov 2026. Team: **Pranav Jain** (`jpranav0802`), **Abhiraj Dutta** (`Erenius-Valoraen`), **Avani Tiwari** (`avani131313`).
+Repo: https://github.com/jpranav0802/raterace · Issues: https://github.com/jpranav0802/raterace/issues · Board: https://github.com/users/jpranav0802/projects/1
+
+**Showcase: Mon 16 Nov, 4:00 PM** (Devpost closes then). Everything below is planned backwards from that.
+
+---
+
+## 0. How to use this document
+
+1. Read sections 1 to 5 fully. They apply to everyone.
+2. Then read **your own section** (6 = Pranav, 7 = Abhiraj, 8 = Avani) and section 9 (shared tasks).
+3. Give your AI assistant this whole file plus the prompt in **section 12** (fill in your name). Tell it to work on one GitHub issue at a time.
+4. **Section 4 (Frozen interfaces) is a contract between the three of us.** Nobody changes a name, type, field, port, env variable or API shape in section 4 without telling the other two first (see 4.10). This is what stops the three parts from not fitting together on Sunday.
+5. If this file and the code disagree, the code on `main` wins **only if** the change was agreed; otherwise fix the code.
+
+---
+
+## 1. What we are building (one screen)
+
+Every remittance becomes a live auction. A sender wants to send $200 (USDC on Stellar) to a family in Mexico (SPEI bank payout). Three licensed payout providers ("anchors": Alpha, Beta, Gamma; mocked by us on testnet) each send a **signed quote** for the exact amount of pesos the family receives **after all fees** (`landed_local`). The best offer wins.
+
+A **Soroban contract** then:
+1. verifies the anchor's ed25519 signature over the quote **on-chain**,
+2. checks the quote's markup against an **oracle** market rate (Reflector interface; our mock on testnet) and rejects stale prices or markups over the cap,
+3. pulls the sender's USDC into **escrow**,
+4. **reserves part of the anchor's USDC bond** (105% of the transfer),
+5. pays the anchor only after it reports payout (`mark_paid`), then keeps the bond reserved for a short **challenge window**,
+6. refunds the sender **plus a penalty taken from the bond** if the anchor misses the deadline (`refund_expired`) or loses a dispute (`resolve`).
+
+The family never touches crypto. The sender never sees XLM (we sponsor fees with **fee-bump** transactions). Personal data never goes on-chain (only a sha256 hash).
+
+Demo corridor: **US → Mexico, `MX_SPEI`, asset code `MXN`**. Testnet only.
+
+### Demo story (the 1-minute video, we build toward exactly this)
+1. Quote board shows Alpha, Beta, Gamma with landed MXN and markup vs market. Gamma is best.
+2. Sender picks Gamma → `open_order` (link to Stellar Expert). Gamma never pays → after the deadline `refund_expired` → sender refunded + penalty, Gamma slashed and **auto-suspended**; leaderboard updates.
+3. Sender sends again → Alpha now best → simulated SPEI payout → `mark_paid` → USDC to Alpha → sender taps "Money arrived" → Settled.
+4. Flash: stale oracle → rejected by contract; quote 6% under market → rejected by contract.
+
+---
+
+## 2. Who owns what (split by user journey, everyone does contract + backend + web)
+
+| | **Pranav: foundation + anchor side** | **Abhiraj: sender side** | **Avani: settlement side** |
+|---|---|---|---|
+| Contract | #2 scaffold, #3 frozen interface, #5 registry + bonds + `quote_digest` | #4 mock oracle, #6 `open_order`, #7 its tests | #8 settlement functions, #9 their tests |
+| Scripts | #10 deploy + bindings | #22 rejection demo | #11 testnet smoke run, #23 Gamma demo |
+| Backend | #12 mock anchors (quoting) | #13 quote router, #14 fee sponsorship + onboarding | #15 payout worker, #16 indexer |
+| Web | #20 admin panel, #21 leaderboard | #17 send page + wallet, #18 quote board | #19 order tracker |
+| Deliverables | #24 README | #25 hosted live URL | #26 demo video |
+| Shared | #1 toolchain, #27 final dry runs | #1, #27 | #1, #27 |
+
+### File ownership (only edit files you own; anything else = ask the owner)
+
+| Path | Owner |
+|---|---|
+| `Cargo.toml` (root), `package.json` (root), `.env.example`, `.gitignore` | Pranav |
+| `contracts/oracle_interface/**` | Pranav (frozen in #3) |
+| `contracts/raterace/src/{lib.rs,types.rs,errors.rs,storage.rs,events.rs}` | Pranav (frozen in #3; later edits only by agreement) |
+| `contracts/raterace/src/registry.rs`, `contracts/raterace/src/test/registry_tests.rs` | Pranav |
+| `contracts/raterace/src/orders.rs`, `contracts/raterace/src/test/orders_tests.rs` | Abhiraj |
+| `contracts/raterace/src/settle.rs`, `contracts/raterace/src/test/settle_tests.rs` | Avani |
+| `contracts/raterace/src/test/mod.rs`, `contracts/raterace/src/test/helpers.rs` | Pranav creates; anyone may **add** helpers at the bottom |
+| `contracts/mock_oracle/**` | Abhiraj |
+| `packages/shared/**` | Pranav creates; anyone may **add** exports (don't rename) |
+| `packages/raterace-client/**` | generated by #10, never hand-edit |
+| `scripts/deploy.ts`, `scripts/bindings.sh`, `deployments/testnet.json` | Pranav |
+| `scripts/smoke.ts`, `scripts/demo-gamma.ts` | Avani |
+| `scripts/demo-rejections.ts` | Abhiraj |
+| `anchors/src/quote/**` | Pranav |
+| `anchors/src/payout/**` | Avani |
+| `router/**` | Abhiraj |
+| `indexer/**` | Avani |
+| `web/src/pages/Send.tsx`, `web/src/pages/Quotes.tsx`, `web/src/lib/wallet.ts`, `web/src/lib/submit.ts` | Abhiraj |
+| `web/src/pages/Order.tsx` | Avani |
+| `web/src/pages/Admin.tsx`, `web/src/pages/Leaderboard.tsx` | Pranav |
+| `web/src/App.tsx`, `web/src/main.tsx`, `web/src/lib/config.ts`, `web/src/lib/format.ts`, `web/src/styles.css` | Pranav creates; anyone may add small things, tell the team |
+| `README.md` | Pranav integrates; everyone sends their section |
+
+---
+
+## 3. Timeline, milestones and sync points
+
+All times Toronto (EST). Milestones exist on GitHub with the same names.
+
+| Milestone | Deadline | Gate (must be true) |
+|---|---|---|
+| **M0 Foundation** | Sat 5:30 PM | #2 and #3 merged; everyone can `stellar contract build` and `cargo test` on `main` |
+| **M1 Contract on testnet** | Sat 11:59 PM | #5 #6 #7 #8 #9 #10 #11 merged; `scripts/smoke.ts` passes both paths on testnet |
+| **M2 End-to-end in browser** | Sun 6:00 PM | A judge can send from the browser and watch the best anchor win and get paid |
+| **M3 Demo-ready** | Sun 11:59 PM | Admin, leaderboard, both demo scripts, README with contract IDs, live URL |
+| **M4 Ship** | Mon 12:00 PM | Video uploaded, fresh redeploy, two clean dry runs, `main` frozen |
+
+**Sync calls (10 minutes, everyone):** Sat 5:30 PM · Sat 9:00 PM · Sat 11:59 PM · Sun 11:00 AM · Sun 3:00 PM · Sun 6:00 PM · Sun 11:00 PM · Mon 9:00 AM · Mon 12:00 PM.
+Agenda each time: (1) what merged, (2) what's blocked and on whom, (3) is the next milestone still realistic, if not apply the cut order (section 11).
+
+### Dependency map (who waits on whom)
+
+```
+#1 toolchain (all) ─┐
+#2 scaffold (P) ────┼─> #3 frozen interface (P) ─┬─> #5 registry (P) ──┐
+                    │                            ├─> #6 open_order (Ab) ─> #7 tests (Ab)
+                    └─> #4 mock oracle (Ab) ─────┤                     │
+                                                 └─> #8 settle (Av) ──> #9 tests (Av)
+#5 + #4 ─> #10 deploy + bindings (P) ─> #11 smoke run (Av, needs #6 #8 too)  == M1 ==
+#10 ─> #12 anchor quotes (P) ─> #13 router (Ab) ─┐
+#10 ─> #14 fee-bump + onboard (Ab) ──────────────┼─> #18 quote board (Ab)
+#2  ─> #17 send page + wallet (Ab) ──────────────┘
+#12 + #8 ─> #15 payout worker (Av)
+#10 ─> #16 indexer (Av) ─> #19 order tracker (Av), #21 leaderboard (P)   == M2 ==
+#20 admin (P), #22 rejections (Ab), #23 gamma demo (Av), #24 README (P), #25 live URL (Ab)  == M3 ==
+#26 video (Av), #27 dry runs (all)  == M4 ==
+```
+
+**While waiting on #3 (about 90 minutes from when Pranav starts):**
+- Abhiraj: #1, then #4 (mock oracle) as soon as the scaffold (#2) is pushed; it only needs `contracts/oracle_interface`, which is part of #2.
+- Avani: #1, then read the Soroban docs on storage/TTL, auth and token transfers; then start #16 indexer and #19 tracker **with fake data** (hardcoded `OrderView` objects from section 4.8) so the UI and API shapes exist before the contract is deployed.
+
+---
+
+## 4. Frozen interfaces (do not change without 4.10)
+
+### 4.1 Versions (checked 14 Nov 2026)
+
+| Tool | Version |
+|---|---|
+| Rust | stable (1.100 on Pranav's machine), target `wasm32v1-none` |
+| Stellar CLI | 30.0.1 |
+| `soroban-sdk` (crate) | 29.0.1 |
+| `@stellar/stellar-sdk` (npm) | 17.4.0 (needs Node >= 22.12) |
+| Node.js | 22 LTS (>= 22.12) |
+| `ed25519-dalek` (Rust dev-dependency, tests only) | 2.x |
+
+If a version doesn't install, tell the team before changing it; never upgrade alone mid-build.
+
+### 4.2 Repo layout
+
+```
+Cargo.toml                         Rust workspace (members = contracts/*)
+package.json                       npm workspaces
+.env.example                       every variable, no secrets
+contracts/oracle_interface/        lib crate: Asset, PriceData, OracleClient (Reflector-compatible)
+contracts/mock_oracle/             contract: Reflector-compatible mock with admin price + timestamp setters
+contracts/raterace/src/
+  lib.rs        #[contract] RaceRaceContract + #[contractimpl] thin wrappers -> modules
+  types.rs      Config, Anchor, Quote, Status, Order, SenderLimit
+  errors.rs     Error enum (fixed codes)
+  storage.rs    DataKey + load/save helpers + TTL bumping
+  events.rs     event structs + emit helpers
+  registry.rs   (Pranav) init, update_config, anchors, bonds, sender limits, quote_digest, getters
+  orders.rs     (Abhiraj) open_order
+  settle.rs     (Avani) mark_paid, confirm, release, dispute, resolve, refund_expired
+  test/         mod.rs, helpers.rs, registry_tests.rs, orders_tests.rs, settle_tests.rs
+packages/shared/                   TS: config loader, types, formatting, explorer links, quoteDigest helper
+packages/raterace-client/          GENERATED TS bindings (stellar contract bindings typescript)
+anchors/src/quote/                 (Pranav) SEP-38-shaped quote servers for alpha/beta/gamma
+anchors/src/payout/                (Avani) payout worker for alpha/beta (gamma never pays)
+router/                            (Abhiraj) /rfq, /submit, /onboard/*
+indexer/                           (Avani) getEvents -> /orders, /leaderboard
+web/                               Vite + React + TS
+scripts/                           deploy.ts, bindings.sh, smoke.ts, demo-gamma.ts, demo-rejections.ts
+deployments/testnet.json           public contract IDs + accounts (NO secrets), committed
+docs/BUILD_PLAN.md                 this file
+```
+
+### 4.3 Units and encoding conventions (everyone, everywhere)
+
+| Thing | On-chain (Rust) | JSON over HTTP | TypeScript in code |
+|---|---|---|---|
+| USDC amount | `i128`, 7 decimals (1 USDC = 10_000_000) | **string** of integer stroops, e.g. `"2000000000"` = 200 USDC | `bigint` |
+| MXN amount (`landed_local`, fees) | `i128`, 7 decimals (MX$1 = 10_000_000) | string of integer units | `bigint` |
+| Oracle price | `i128`, **14 decimals**, USD per 1 MXN | string, e.g. `"5000000000000"` = 0.05 USD | `bigint` |
+| Time | `u64` unix **seconds** | number (seconds) | `number` (seconds; convert `Date.now()/1000`) |
+| Bytes (`request_id`, hashes, keys) | `BytesN<32>` | lowercase hex, no `0x` (64 chars) | `Buffer` |
+| Signature | `BytesN<64>` | lowercase hex (128 chars) | `Buffer` |
+| Corridor / asset code | `Symbol` (`MX_SPEI`, `MXN`) | string | string |
+| Addresses | `Address` | `G...` / `C...` string | string |
+| Basis points | `u32` (100 bps = 1%) | number | number |
+
+Display to users: USD with 2 decimals, MXN as `MX$3,937.00`. No words like "stroop", "XLM", "USDC", "wallet address", "transaction" in the main sender UI; say "dollars", "pesos", "View proof on Stellar".
+
+### 4.4 Oracle interface (`contracts/oracle_interface/src/lib.rs`, created in #2)
+
+Matches the Reflector (SEP-40) interface so the real Reflector feed can replace the mock by changing one address.
+
+```rust
+#![no_std]
+use soroban_sdk::{contractclient, contracttype, Address, Env, Symbol, Vec};
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Asset {
+    Stellar(Address),
+    Other(Symbol),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceData {
+    pub price: i128,     // 14 decimals for fiat feeds
+    pub timestamp: u64,  // see note
+}
+
+#[contractclient(name = "OracleClient")]
+pub trait Oracle {
+    fn lastprice(env: Env, asset: Asset) -> Option<PriceData>;
+    fn decimals(env: Env) -> u32;
+    fn resolution(env: Env) -> u32;
+    fn assets(env: Env) -> Vec<Asset>;
+}
+```
+
+**Note (unverified, Abhiraj checks in #4):** whether Reflector's `timestamp` is in seconds or milliseconds. Our mock uses **seconds** and the contract compares against `env.ledger().timestamp()` (seconds). If Reflector uses ms, we document it and convert only if we switch to the real feed.
+
+Mock oracle (`contracts/mock_oracle`) public functions, frozen:
+
+| Function | Auth | Behaviour |
+|---|---|---|
+| `init(admin: Address)` | admin | once |
+| `set_price(asset: Asset, price: i128)` | admin | stores price with `timestamp = now` |
+| `set_price_at(asset: Asset, price: i128, timestamp: u64)` | admin | for the stale-price demo |
+| `lastprice(asset: Asset) -> Option<PriceData>` | none | `None` if never set |
+| `decimals() -> u32` | none | `14` |
+| `resolution() -> u32` | none | `300` |
+| `assets() -> Vec<Asset>` | none | assets that have a price |
+
+### 4.5 RateRace contract types (`types.rs`)
+
+```rust
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Config {
+    pub admin: Address,
+    pub usdc: Address,                 // USDC Stellar Asset Contract
+    pub oracle: Address,               // mock oracle or Reflector
+    pub max_oracle_age_s: u64,         // 600
+    pub payout_window_s: u64,          // demo 120, prod 3600
+    pub challenge_window_s: u64,       // demo 60, prod 86400
+    pub bond_ratio_bps: u32,           // 10500 (must be >= 10000 + penalty_bps)
+    pub penalty_bps: u32,              // 500
+    pub default_max_markup_bps: u32,   // 300
+    pub default_daily_cap: i128,       // 1000 USDC = 10_000_000_000 (added vs handoff)
+    pub max_slashes: u32,              // 1 = auto-suspend after one slash (added vs handoff)
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Anchor {
+    pub signing_key: BytesN<32>,       // ed25519 public key used ONLY for quotes
+    pub corridors: Vec<Symbol>,        // e.g. MX_SPEI
+    pub bond: i128,                    // total USDC bonded
+    pub reserved: i128,                // part of bond locked by open orders
+    pub filled: u32,
+    pub disputed: u32,
+    pub slashed: u32,
+    pub active: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Quote {
+    pub anchor: Address,
+    pub request_id: BytesN<32>,        // single use
+    pub corridor: Symbol,
+    pub asset_code: Symbol,            // MXN
+    pub send_usdc: i128,
+    pub landed_local: i128,            // what the family receives AFTER all fees
+    pub expires_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Status { Open, Paid, Disputed, Settled, Refunded, Slashed }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Order {
+    pub id: u64,
+    pub sender: Address,
+    pub quote: Quote,
+    pub recipient_hash: BytesN<32>,    // sha256 of recipient details, never raw PII
+    pub status: Status,
+    pub reserved_bond: i128,
+    pub opened_at: u64,
+    pub payout_deadline: u64,
+    pub challenge_ends: u64,           // 0 until mark_paid
+    pub payout_ref: Option<BytesN<32>>,// sha256 of payout receipt
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SenderLimit { pub tier: u32, pub daily_cap: i128 }
+```
+
+### 4.6 Errors (`errors.rs`, codes are frozen; JS maps code → message)
+
+```rust
+use soroban_sdk::contracterror;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    InvalidConfig = 3,
+    InvalidAmount = 4,
+    Overflow = 5,
+    AnchorExists = 10,
+    AnchorNotFound = 11,
+    AnchorInactive = 12,
+    CorridorNotAllowed = 13,
+    InsufficientBond = 14,
+    NotOrderAnchor = 15,
+    QuoteExpired = 20,
+    RequestIdUsed = 21,
+    OracleUnavailable = 22,
+    OracleStale = 23,
+    MarkupTooHigh = 24,
+    DailyCapExceeded = 25,
+    OrderNotFound = 30,
+    WrongStatus = 31,
+    DeadlinePassed = 32,
+    DeadlineNotPassed = 33,
+    ChallengeWindowOpen = 34,
+    ChallengeWindowClosed = 35,
+}
+```
+
+**Important:** `env.crypto().ed25519_verify(...)` does not return a bool; on a bad signature the whole call **traps** (host error, no contract error code). Tests use `try_open_order(...)` and assert `is_err()`. The UI shows "This offer's signature is invalid" for any host error during `open_order` simulation that is not one of the codes above.
+
+User-facing messages (web `format.ts`): 7 "This offer expired, get new offers", 12 "This provider is paused", 14 "Provider can't cover this amount right now", 21 "Offer already used", 22/23 "Market rate unavailable, try again in a minute", 24 "Offer is too far below the market rate", 25 "Daily sending limit reached", others "Something went wrong (code N)".
+
+### 4.7 Contract functions (signatures frozen; `lib.rs` wrappers call the modules)
+
+| Function | Module | Auth | Returns |
+|---|---|---|---|
+| `init(config: Config)` | registry | `config.admin` | `Result<(), Error>` |
+| `update_config(config: Config)` | registry | current admin | `Result<(), Error>` |
+| `register_anchor(anchor: Address, signing_key: BytesN<32>, corridors: Vec<Symbol>)` | registry | `anchor` | `Result<(), Error>` |
+| `set_active(anchor: Address, active: bool)` | registry | admin | `Result<(), Error>` |
+| `add_bond(anchor: Address, amount: i128)` | registry | `anchor` | `Result<(), Error>` |
+| `withdraw_bond(anchor: Address, amount: i128)` | registry | `anchor` | `Result<(), Error>` |
+| `set_sender_limit(sender: Address, tier: u32, daily_cap: i128)` | registry | admin | `Result<(), Error>` |
+| `quote_digest(quote: Quote) -> BytesN<32>` | registry | none | `BytesN<32>` = `sha256(quote.to_xdr(&env))` |
+| `open_order(sender: Address, quote: Quote, signature: BytesN<64>, recipient_hash: BytesN<32>, max_markup_bps: u32)` | orders | `sender` | `Result<u64, Error>` (order id) |
+| `mark_paid(anchor: Address, order_id: u64, payout_ref: BytesN<32>)` | settle | `anchor` | `Result<(), Error>` |
+| `confirm(order_id: u64)` | settle | `order.sender` | `Result<(), Error>` |
+| `release(order_id: u64)` | settle | none | `Result<(), Error>` |
+| `dispute(order_id: u64)` | settle | `order.sender` | `Result<(), Error>` |
+| `resolve(order_id: u64, anchor_at_fault: bool)` | settle | admin | `Result<(), Error>` |
+| `refund_expired(order_id: u64)` | settle | none | `Result<(), Error>` |
+| `get_config()` | registry | none | `Result<Config, Error>` |
+| `get_anchor(anchor: Address)` | registry | none | `Result<Anchor, Error>` |
+| `list_anchor_ids()` | registry | none | `Vec<Address>` |
+| `get_sender_limit(sender: Address)` | registry | none | `SenderLimit` (default `{tier: 0, daily_cap: config.default_daily_cap}`) |
+| `get_order(order_id: u64)` | settle | none | `Result<Order, Error>` |
+
+Contract struct name: `RateRaceContract`. Every function takes `env: Env` first.
+
+**Money rules (all modules must respect):**
+- The contract's USDC balance = all bonds + all escrowed orders. Never transfer out more than the rule below says.
+- `reserve = send_usdc * bond_ratio_bps / 10000` is added to `anchor.reserved` on `open_order` and removed exactly once when the order finishes (Settled, Refunded or Slashed).
+- `penalty = send_usdc * penalty_bps / 10000`.
+- `refund_expired` (Open, past deadline): escrow still holds `send_usdc` → transfer `send_usdc + penalty` to sender; `anchor.bond -= penalty`; `anchor.reserved -= reserve`; `slashed += 1`; status Refunded.
+- `resolve(at_fault = true)` (Disputed; the anchor was already paid by `mark_paid`, escrow is empty) → transfer `send_usdc + penalty` to sender **from the bond**; `anchor.bond -= send_usdc + penalty`; `anchor.reserved -= reserve`; `slashed += 1`; status Slashed.
+- `resolve(at_fault = false)`, `confirm`, `release` → `anchor.reserved -= reserve`; status Settled.
+- After any slash: if `anchor.slashed >= config.max_slashes` then `anchor.active = false` (emit `anchor_active`).
+- `init` and `update_config` reject with `InvalidConfig` if `bond_ratio_bps < 10000 + penalty_bps` or any window is 0.
+- All arithmetic uses `checked_add/sub/mul/div` → `Error::Overflow`.
+
+### 4.8 Storage (`storage.rs`)
+
+```rust
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Config,                    // instance
+    NextOrderId,               // instance, u64, starts at 1
+    AnchorList,                // persistent, Vec<Address>
+    Anchor(Address),           // persistent
+    Order(u64),                // persistent
+    SenderLimit(Address),      // persistent
+    SenderDay(Address, u64),   // temporary, i128 spent; u64 = timestamp / 86400
+    RequestId(BytesN<32>),     // temporary, bool
+}
+```
+TTL: `DAY_LEDGERS = 17_280`; persistent and instance entries: `extend_ttl(DAY_LEDGERS, 30 * DAY_LEDGERS)` on every write; temporary entries: `extend_ttl(DAY_LEDGERS, 2 * DAY_LEDGERS)`.
+Helpers provided in #3 (use these, don't touch storage directly): `config(&env) -> Result<Config, Error>`, `set_config`, `load_anchor(&env, &Address) -> Result<Anchor, Error>`, `save_anchor`, `anchor_exists`, `anchor_ids`, `push_anchor_id`, `load_order(&env, u64) -> Result<Order, Error>`, `save_order`, `next_order_id(&env) -> u64` (increments), `is_request_used`, `mark_request_used`, `sender_spent_today`, `add_sender_spent`, `sender_limit`, `set_sender_limit`.
+
+### 4.9 Events (`events.rs`, emit helpers written in #3)
+
+Use the SDK's `#[contractevent]` macro (soroban-sdk 23+). Topic 1 = event name (snake_case symbol), topic 2 = the id shown below, data = map of the other fields. **#3 must include a unit test that prints one emitted event** (`env.events().all()`) and paste it in the PR, so the indexer (#16) knows the exact on-chain shape.
+
+| Event | Topic 2 | Data fields | Emitted by |
+|---|---|---|---|
+| `registered` | anchor | corridors | register_anchor |
+| `anchor_active` | anchor | active | set_active, auto-suspend |
+| `bond_added` | anchor | amount, bond | add_bond |
+| `bond_withdrawn` | anchor | amount, bond | withdraw_bond |
+| `awarded` | order_id | anchor, sender, send_usdc, landed_local, corridor, payout_deadline | open_order |
+| `paid` | order_id | anchor, payout_ref, challenge_ends | mark_paid |
+| `confirmed` | order_id | anchor | confirm |
+| `released` | order_id | anchor | release |
+| `disputed` | order_id | anchor | dispute |
+| `resolved` | order_id | anchor, anchor_at_fault, penalty | resolve |
+| `refunded` | order_id | anchor, refund, penalty | refund_expired |
+
+No personal data in events. Ever.
+
+### 4.10 Off-chain interfaces
+
+**Ports (local):** web `5173` · router `8787` · indexer `8790` · anchor Alpha `8801` · Beta `8802` · Gamma `8803`.
+
+**Environment (`.env` at repo root; generated by `scripts/deploy.ts`; never committed; Pranav shares it privately with the team after each deploy):**
+
+```
+STELLAR_NETWORK=testnet
+RPC_URL=https://soroban-testnet.stellar.org
+HORIZON_URL=https://horizon-testnet.stellar.org
+NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+EXPLORER_URL=https://stellar.expert/explorer/testnet
+RATERACE_CONTRACT_ID=
+ORACLE_CONTRACT_ID=
+USDC_CONTRACT_ID=
+USDC_CODE=USDC
+USDC_ISSUER_PUBLIC=
+USDC_ISSUER_SECRET=
+ADMIN_PUBLIC=
+ADMIN_SECRET=
+SPONSOR_PUBLIC=
+SPONSOR_SECRET=
+DEMO_SENDER_PUBLIC=
+DEMO_SENDER_SECRET=
+ALPHA_PUBLIC=
+ALPHA_SECRET=
+ALPHA_QUOTE_SECRET=
+BETA_PUBLIC=
+BETA_SECRET=
+BETA_QUOTE_SECRET=
+GAMMA_PUBLIC=
+GAMMA_SECRET=
+GAMMA_QUOTE_SECRET=
+DEPLOY_LEDGER=
+MOCK_MXN_USD_PRICE=5000000000000
+ROUTER_URL=http://localhost:8787
+INDEXER_URL=http://localhost:8790
+ANCHOR_URLS=alpha=http://localhost:8801,beta=http://localhost:8802,gamma=http://localhost:8803
+VITE_RPC_URL=https://soroban-testnet.stellar.org
+VITE_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+VITE_RATERACE_CONTRACT_ID=
+VITE_ROUTER_URL=http://localhost:8787
+VITE_INDEXER_URL=http://localhost:8790
+VITE_EXPLORER_URL=https://stellar.expert/explorer/testnet
+```
+`MOCK_MXN_USD_PRICE` default (0.05 USD per peso, i.e. 20 MXN per USD) is **illustrative**. Before recording the video, update it to a real current USD/MXN rate from a named source and note the source + time in the README.
+
+`*_QUOTE_SECRET` = separate ed25519 keypair (Stellar `S...` secret) used only to sign quotes; its raw 32-byte public key is the anchor's `signing_key`. Admin keys never go into any `VITE_` variable (the web build is public).
+
+**`deployments/testnet.json` (committed, public, no secrets):**
+```json
+{
+  "network": "testnet",
+  "deployedAt": "2026-11-14T23:00:00Z",
+  "deployLedger": 0,
+  "contracts": { "raterace": "C...", "oracle": "C...", "usdc": "C..." },
+  "usdc": { "code": "USDC", "issuer": "G..." },
+  "accounts": { "admin": "G...", "sponsor": "G...", "demoSender": "G..." },
+  "anchors": [
+    { "name": "alpha", "displayName": "Alpha", "address": "G...", "signingKeyHex": "…", "quoteUrl": "http://localhost:8801" },
+    { "name": "beta",  "displayName": "Beta",  "address": "G...", "signingKeyHex": "…", "quoteUrl": "http://localhost:8802" },
+    { "name": "gamma", "displayName": "Gamma", "address": "G...", "signingKeyHex": "…", "quoteUrl": "http://localhost:8803" }
+  ]
+}
+```
+
+**Shared JSON type `QuoteJson` (`packages/shared/src/types.ts`):**
+```ts
+export interface QuoteJson {
+  anchor: string;            // G... anchor account
+  anchorName: string;        // "alpha"
+  displayName: string;       // "Alpha"
+  requestId: string;         // hex 64
+  corridor: string;          // "MX_SPEI"
+  assetCode: string;         // "MXN"
+  sendUsdc: string;          // stroops
+  landedLocal: string;       // MXN units, 7 decimals
+  expiresAt: number;         // unix seconds
+  signature: string;         // hex 128
+  fees: { spreadBps: number; payoutFeeLocal: string };
+}
+export interface RankedQuote extends QuoteJson {
+  markupBps: number;         // vs oracle mid-rate, includes all fees
+  reputation: { filled: number; disputed: number; slashed: number };
+  valid: true;
+}
+```
+
+**Anchor quote API (each anchor port), SEP-38-shaped with a RateRace extension:**
+`POST /quote`
+```json
+{
+  "sell_asset": "stellar:USDC:G...ISSUER",
+  "buy_asset": "iso4217:MXN",
+  "sell_amount": "200.00",
+  "context": "sep31",
+  "raterace": { "request_id": "hex64", "corridor": "MX_SPEI", "sender": "G...", "expires_at": 1763160000 }
+}
+```
+Response `200`:
+```json
+{
+  "id": "hex64 (= request_id)",
+  "expires_at": "2026-11-15T01:20:00Z",
+  "price": "0.0503",
+  "sell_asset": "stellar:USDC:G...", "sell_amount": "200.00",
+  "buy_asset": "iso4217:MXN", "buy_amount": "3937.00",
+  "fee": { "total": "15.00", "asset": "iso4217:MXN", "details": [ { "name": "SPEI payout fee", "amount": "15.00" } ] },
+  "raterace": { "quote": { "...QuoteJson without signature..." }, "signature": "hex128" }
+}
+```
+`GET /info` → `{ name, displayName, address, signingKeyHex, corridors: ["MX_SPEI"], spreadBps, payoutFeeLocal }`.
+Anchors return `503` (router skips them) if free bond < required reserve or they are inactive.
+
+**Router API (`:8787`), all JSON, CORS enabled:**
+- `POST /rfq` body `{ corridor: "MX_SPEI", assetCode: "MXN", sendUsdc: "2000000000", sender: "G...", recipientCountry: "MX", method: "SPEI" }` → `{ requestId, expiresAt, oracle: { price: "…", timestamp, mxnPerUsd: 19.9 }, onRampFeeUsd: "0.00", quotes: RankedQuote[] }` sorted by `landedLocal` descending. `expiresAt = now + 120`.
+- `POST /submit` body `{ xdr: "<base64 signed inner tx>" }` → `{ hash, status: "SUCCESS"|"FAILED", explorerUrl, returnValue?: string, errorCode?: number }`. Only accepts: (a) one `invokeHostFunction` op calling `RATERACE_CONTRACT_ID`, or (b) one `changeTrust` op for `USDC:issuer`. Anything else → `400`.
+- `POST /onboard/fund` body `{ publicKey }` → creates the account (Friendbot on testnet) → `{ ok: true }`.
+- `POST /onboard/usdc` body `{ publicKey }` → issuer sends 1,000 test USDC (requires trustline) → `{ ok: true, hash }`.
+- `GET /anchors` → `[{ name, displayName, address, active, bond, reserved, filled, disputed, slashed }]`.
+- `GET /health` → `{ ok: true }`.
+
+**Indexer API (`:8790`):**
+```ts
+export interface OrderView {
+  id: number; status: "Open"|"Paid"|"Disputed"|"Settled"|"Refunded"|"Slashed";
+  sender: string; anchor: string; anchorName: string;
+  sendUsdc: string; landedLocal: string; corridor: string;
+  openedAt: number; payoutDeadline: number; challengeEnds: number;
+  payoutRef: string | null;
+  txs: { event: string; hash: string; ledger: number; at: number }[];
+}
+export interface LeaderboardRow {
+  anchor: string; name: string; displayName: string; active: boolean;
+  bond: string; reserved: string; filled: number; disputed: number; slashed: number;
+}
+```
+- `GET /orders/:id` → `OrderView` (404 if unknown) · `GET /orders?sender=G...` → `OrderView[]` · `GET /leaderboard` → `LeaderboardRow[]` · `GET /health`.
+
+**Generated client (`packages/raterace-client`):** bindings generated from the wasm. Usage:
+```ts
+import { Client } from "raterace-client";
+const client = new Client({ contractId, networkPassphrase, rpcUrl, publicKey });
+const tx = await client.get_anchor({ anchor: "G..." });   // simulated automatically
+const anchor = tx.result.unwrap();                        // Result<T> → unwrap()
+```
+TS mapping: `i128`/`u64` → `bigint`, `u32` → `number`, `BytesN` → `Buffer`, `Symbol`/`Address` → `string`, `Option<T>` → `T | undefined`, unit enum `Status` → `{ tag: "Open", values: undefined }` (check the generated `.d.ts`).
+
+**Shared helper `quoteDigest(quote)` (`packages/shared/src/digest.ts`, written in #12):** simulates the contract's `quote_digest` and returns a 32-byte `Buffer`. **Never** re-encode XDR by hand in JS; always use this, so Rust and JS sign/verify identical bytes.
+
+### 4.11 Changing a frozen interface
+
+1. Open a GitHub issue titled `Interface change: <what>` with the exact before/after.
+2. Message the other two. Wait for both to reply "ok".
+3. The owner of the file makes the change in a small PR that touches only that; everyone pulls `main` right after merge.
+
+---
+
+## 5. Git workflow (exact commands)
+
+**First time (Abhiraj and Avani):**
+```bash
+git clone https://github.com/jpranav0802/raterace.git
+cd raterace
+git config user.name "Your Name"
+git config user.email "your-github-email@example.com"
+```
+(Pranav already has the repo at `~/Desktop/blockchain`.)
+
+**Every task:**
+```bash
+git checkout main
+git pull
+git checkout -b <yourname>/<issue#>-<short-name>       # e.g. avani/8-settlement
+# ... work, run tests ...
+git add <the files you changed>
+git commit -m "Short description (#8)"
+git push -u origin <yourname>/<issue#>-<short-name>
+gh pr create --fill --base main --body "Closes #8"     # or open the PR on github.com
+```
+**Rules:**
+- One issue → one branch → one PR. Small PRs (under ~400 lines) get reviewed fast.
+- Before opening a PR: `cargo test` (if you touched contracts), `npm run build -w <your-workspace>` (if you touched TS), and pull `main` again: `git pull origin main` (fix conflicts in your own files only).
+- One teammate reviews within 30 minutes; reviewer checks section 4 is respected. Merge with **Squash and merge**.
+- After any merge, everyone runs `git checkout main && git pull` before starting the next task.
+- On the issue: comment "started" when you begin; the PR's `Closes #N` closes it. Move the card on the board.
+- **Never commit:** `.env`, any `S...` secret, `target/`, `node_modules/`, `RateRace_full_handoff.md`. Run `git status` before every commit.
+- Never `git push --force` to `main`. Never commit directly to `main` (except Pranav's docs commits in M0).
+- If you are stuck for more than 20 minutes, post in the team chat with the exact error.
+
+---
+
+## 6. Pranav: foundation + anchor side
+
+### #2 Monorepo scaffold (M0, never-cut)
+Goal: everyone can build contracts and run the web shell from a clean clone.
+1. Branch `pranav/2-monorepo-scaffold`.
+2. Root `Cargo.toml`: `[workspace] resolver = "2"`, `members = ["contracts/*"]`, `[workspace.dependencies] soroban-sdk = "29.0.1"`, and the standard Soroban release profile (`opt-level = "z"`, `overflow-checks = true`, `debug = 0`, `strip = "symbols"`, `debug-assertions = false`, `panic = "abort"`, `codegen-units = 1`, `lto = true`).
+3. `contracts/oracle_interface` (lib crate, `crate-type = ["rlib"]`) with exactly section 4.4.
+4. `contracts/mock_oracle` (`crate-type = ["cdylib", "rlib"]`) depending on `oracle_interface`: compiling stub with the function list from 4.4 (bodies `todo!()`); Abhiraj implements in #4.
+5. `contracts/raterace` (`cdylib`, `rlib`) depending on `oracle_interface`: a compiling "hello" contract (replaced in #3).
+6. Root `package.json`: `"private": true`, `"type": "module"`, `"workspaces": ["packages/*", "router", "anchors", "indexer", "web", "scripts"]`, `"engines": { "node": ">=22.12" }`, scripts: `build:contracts` (`stellar contract build`), `test:contracts` (`cargo test`), `dev:web`, `dev:router`, `dev:anchors`, `dev:indexer`, `deploy`, `bindings`.
+7. `packages/shared`: `package.json` name `@raterace/shared`, `src/index.ts` exporting `loadConfig()` (reads root `.env` via `dotenv`), the types from 4.10, `explorerTx(hash)`, `explorerContract(id)`, `explorerAccount(g)`, `toStroops(decimalString)`, `fromStroops(bigint, decimals=2)`.
+8. `router`, `anchors`, `indexer`, `scripts`: each a `package.json` (deps: `@stellar/stellar-sdk@17.4.0`, `@raterace/shared`, `tsx`, `typescript`; router/anchors/indexer also `express`, `cors`) and a `src/index.ts` that starts a server on its port with `GET /health`.
+9. `web`: Vite React TS (`npm create vite@latest web -- --template react-ts`), add `react-router-dom`, routes `/` (→ `/send`), `/send`, `/quotes`, `/order/:id`, `/leaderboard`, `/admin` with placeholder pages; mobile-first CSS; `src/lib/config.ts` reading `import.meta.env.VITE_*`. Add `buffer` polyfill (`globalThis.Buffer = Buffer` in `main.tsx`) because the Stellar SDK/bindings use `Buffer` in the browser.
+10. `.env.example` = section 4.10 with empty secrets. `tsconfig.base.json` shared.
+11. Verify: `stellar contract build` (3 crates; 2 wasm files), `cargo test`, `npm install`, `npm run dev:web` shows the shell, each service answers `/health`.
+12. Commit, push, PR "Closes #2", ask Abhiraj to review, merge. Tell the team "scaffold is on main".
+
+### #3 Freeze contract interface (M0, never-cut; target ≤ 90 min)
+1. Branch `pranav/3-interface`.
+2. Create `types.rs`, `errors.rs` exactly as 4.5 and 4.6.
+3. `storage.rs`: `DataKey` (4.8), TTL constants, and **fully implemented** helpers listed in 4.8.
+4. `events.rs`: one `#[contractevent]` struct per row of 4.9 and a `pub fn emit_<name>(env, ...)` helper for each (fully implemented).
+5. `lib.rs`: `RateRaceContract` with every function from 4.7 as a thin wrapper, e.g. `pub fn open_order(env: Env, ...) -> Result<u64, Error> { orders::open_order(&env, ...) }`.
+6. `registry.rs`, `orders.rs`, `settle.rs`: every function with the final signature and body `todo!("owner: <name>, issue #N")`.
+7. `test/mod.rs` + `test/helpers.rs`: a `Setup` struct that creates `Env::default()`, `env.mock_all_auths()`, registers a USDC SAC with `env.register_stellar_asset_contract_v2(issuer)`, registers the mock oracle and the RateRace contract with `env.register(...)`, mints USDC to a sender and 3 anchors, and returns clients. (Uses `todo!()` functions only where unavoidable; mark those tests `#[ignore]` until implemented.)
+8. One test that calls `events::emit_awarded` inside `env.as_contract(...)` and prints `env.events().all()`; paste the output in the PR.
+9. `cargo test` and `stellar contract build` pass. PR "Closes #3". **Both teammates must comment "ok, can code against it" before merge.**
+
+### #5 Registry, bonds, quote_digest, getters (M1, never-cut)
+1. Branch `pranav/5-registry`. File `registry.rs`.
+2. `init`: `config.admin.require_auth()`; if config exists → `AlreadyInitialized`; validate (4.7 money rules) → `InvalidConfig`; store; set `NextOrderId = 1`.
+3. `update_config`: current admin auth; validate; store (admin may change).
+4. `register_anchor`: `anchor.require_auth()`; exists → `AnchorExists`; store `Anchor { bond: 0, reserved: 0, counters 0, active: false }`; push to `AnchorList`; emit `registered`.
+5. `set_active`: admin auth; load (→ `AnchorNotFound`); set; emit `anchor_active`.
+6. `add_bond`: `anchor.require_auth()`; `amount > 0` else `InvalidAmount`; `token::Client::new(&env, &config.usdc).transfer(&anchor, &env.current_contract_address(), &amount)`; `bond += amount` (checked); emit `bond_added`.
+7. `withdraw_bond`: anchor auth; `amount <= bond - reserved` else `InsufficientBond`; transfer contract → anchor; `bond -= amount`; emit `bond_withdrawn`.
+8. `set_sender_limit` / `get_sender_limit`.
+9. `quote_digest`: `let bytes = quote.to_xdr(&env); env.crypto().sha256(&bytes).into()` (import `soroban_sdk::xdr::ToXdr`; adjust the conversion to `BytesN<32>` per SDK 29 docs if `.into()` doesn't compile, e.g. `.to_bytes()`).
+10. Getters.
+11. Tests (`registry_tests.rs`): double init fails; invalid config fails; non-admin `set_active` fails (use specific auths instead of `mock_all_auths` for this one, or check `env.auths()`); register twice fails; add/withdraw bond moves USDC and updates fields; withdraw above free bond fails; `quote_digest` deterministic and changes when any field changes.
+12. PR "Closes #5".
+
+### #10 Deploy script + bindings (M1, never-cut)
+Goal: `npm run deploy` builds a complete testnet environment from nothing (testnet resets happen).
+1. Branch `pranav/10-deploy`. File `scripts/deploy.ts` (run with `tsx`). Use the Stellar CLI through `child_process.execFileSync` for keys/deploy/invoke and `@stellar/stellar-sdk` for classic ops where simpler. Check every CLI flag with `stellar <cmd> --help` first; don't guess flags.
+2. Steps, each skipping work already done where possible:
+   1. `stellar contract build`.
+   2. Identities: `admin`, `sponsor`, `usdc-issuer`, `demo-sender`, `alpha`, `beta`, `gamma` via `stellar keys generate <name> --network testnet --fund` (if exists, skip; fund again if account missing). Read public/secret with `stellar keys address <name>` and the CLI's secret-export command (check `stellar keys --help`).
+   3. Quote-signing keys: `Keypair.random()` for alpha/beta/gamma (reuse from existing `.env` if present).
+   4. USDC: deploy the SAC `stellar contract asset deploy --asset USDC:<issuer> --source admin --network testnet` (if it already exists, get the id with `stellar contract id asset --asset USDC:<issuer> --network testnet`).
+   5. Trustlines for demo-sender, alpha, beta, gamma to `USDC:<issuer>`; issuer pays 10,000 USDC to demo-sender and 5,000 to each anchor.
+   6. Deploy `mock_oracle`, `init(admin)`, `set_price(Other("MXN"), MOCK_MXN_USD_PRICE)`.
+   7. Deploy `raterace`; `init(Config)` with demo values: `max_oracle_age_s 600, payout_window_s 120, challenge_window_s 60, bond_ratio_bps 10500, penalty_bps 500, default_max_markup_bps 300, default_daily_cap 10_000_000_000, max_slashes 1`.
+   8. For each anchor: `register_anchor(addr, signingKeyRaw, ["MX_SPEI"])`, `add_bond(2_000 USDC)`, admin `set_active(true)`.
+   9. Record `DEPLOY_LEDGER` (latest ledger from RPC `getLatestLedger`).
+   10. Write `.env` (all of 4.10) and `deployments/testnet.json` (no secrets). Print every contract ID with its Stellar Expert link.
+3. `scripts/bindings.sh`: `stellar contract bindings typescript --wasm target/wasm32v1-none/release/raterace.wasm --output-dir packages/raterace-client --overwrite` then `cd packages/raterace-client && npm install && npm run build`. Name the package `raterace-client`. Also generate one for the mock oracle into `packages/oracle-client` (admin panel needs `set_price_at`).
+4. Run it. Share `.env` privately with Abhiraj and Avani (DM, not git). Commit `deployments/testnet.json`, scripts, and the generated client. PR "Closes #10".
+
+### #12 Mock anchors: quote service (M2, never-cut)
+1. Branch `pranav/12-anchor-quotes`. `anchors/src/quote/server.ts` starts three Express apps (ports 8801/8802/8803) from one config table:
+
+   | Anchor | spreadBps | payoutFeeLocal | Behaviour |
+   |---|---|---|---|
+   | alpha | 120 | MX$15 | honest, pays in ~10 s |
+   | beta | 80 | MX$45 | honest, pays in ~20 s |
+   | gamma | 60 | MX$10 | best quotes, **never pays** |
+2. `packages/shared/src/digest.ts`: `quoteDigest(quote)` using `raterace-client` `quote_digest` simulation (publicKey = SPONSOR_PUBLIC).
+3. `POST /quote` (4.10): read oracle `lastprice(Other("MXN"))` through the oracle client; compute
+   `landed_local = send_usdc * 10^14 / price * (10000 - spreadBps) / 10000 - payoutFeeLocal` (bigint, all 7-decimal units; multiply before divide).
+   Build the contract `Quote`, get digest, sign with `Keypair.fromSecret(QUOTE_SECRET).sign(digest)`, return the SEP-38-shaped body.
+4. Before quoting, check `get_anchor`: inactive → 503; `bond - reserved < send_usdc * 10500 / 10000` → 503.
+5. `GET /info`.
+6. Test: a quote from each anchor passes `open_order` on testnet (script `scripts/try-quote.ts`, or coordinate with Abhiraj's router).
+7. PR "Closes #12".
+
+### #20 Admin panel (M3, cuttable)
+Route `/admin`, local only: the admin secret is pasted into the page at runtime and kept in memory (never in `VITE_` env, never in the build). Controls: approve/suspend anchor (`set_active`), resolve dispute (`resolve` at fault / not at fault), set MXN price (`set_price`), make price stale (`set_price_at` with `timestamp = now - 3600`), set sender limit. Each action shows a "View on Stellar" link. Cut fallback: CLI commands in README.
+
+### #21 Leaderboard (M3, cuttable, first to cut)
+Route `/leaderboard`: table from indexer `/leaderboard` (fallback: `list_anchor_ids` + `get_anchor`). Columns: provider, delivered, disputed, penalties, bond, locked, status (Active / Suspended). Auto-refresh 5 s.
+
+### #24 README (M3, never-cut)
+Sections: one-liner (match Devpost: "Every remittance becomes a live auction: providers bid to deliver the most money to your family, and only get paid once it lands."), how it works (diagram), **Stellar features used** (only what we actually built, each with a contract ID / Stellar Expert link), contract IDs, setup and run on a clean clone, demo steps for judges, architecture (on-chain vs off-chain), security notes, honest limits (mock anchors, admin resolves disputes, demo wallet, payout is off-chain, mock oracle price source), roadmap. Ask each teammate for their part by Sun 9 PM.
+
+---
+
+## 7. Abhiraj: sender side
+
+### #4 Mock oracle + Reflector check (M0, never-cut)
+1. Branch `abhiraj/4-mock-oracle`. Start as soon as #2 is on `main`.
+2. Research (30 min max): Reflector docs + https://github.com/reflector-network/reflector-contract. Answer in the issue: (a) is there a **testnet** fiat feed with MXN? contract ID? (b) `timestamp` unit (seconds or ms)? (c) exact `lastprice` signature and `Asset` enum shape. Mainnet fiat feed for reference: `CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC`.
+3. Implement 4.4 mock functions in `contracts/mock_oracle/src/lib.rs`. Storage: `Admin` (instance), `Price(Asset)` → `PriceData` (persistent), `Assets` → `Vec<Asset>`.
+4. Tests: lastprice None before set; set/get; non-admin set fails; `set_price_at` stores given timestamp; `decimals() == 14`.
+5. `stellar contract build` produces `mock_oracle.wasm`. PR "Closes #4".
+
+### #6 open_order (M1, never-cut)
+Branch `abhiraj/6-open-order`. File `orders.rs`. Implement **in this order** (order matters for clear errors and gas):
+1. `sender.require_auth()`.
+2. `let cfg = storage::config(env)?;`
+3. `quote.send_usdc > 0 && quote.landed_local > 0` else `InvalidAmount`.
+4. Load anchor (`AnchorNotFound`); `active` else `AnchorInactive`; `corridors.contains(&quote.corridor)` else `CorridorNotAllowed`.
+5. `now = env.ledger().timestamp()`; `quote.expires_at > now` else `QuoteExpired`.
+6. `is_request_used(request_id)` → `RequestIdUsed`; else `mark_request_used`.
+7. Signature: `let digest = registry::quote_digest(env, quote.clone()); env.crypto().ed25519_verify(&anchor.signing_key, &digest.into(), &signature);` (convert `BytesN<32>` → `Bytes` as SDK 29 requires; traps if invalid).
+8. Oracle: `OracleClient::new(env, &cfg.oracle).lastprice(&Asset::Other(quote.asset_code.clone()))` → `None` → `OracleUnavailable`; `now - p.timestamp > cfg.max_oracle_age_s` → `OracleStale` (guard against `p.timestamp > now`: treat as fresh).
+9. Markup: `let dec = oracle.decimals(); landed_usd = landed_local * price / 10^dec` (checked). `markup_bps = (send_usdc - landed_usd) * 10000 / send_usdc` (can be negative = better than market, allowed). `cap = min(max_markup_bps, cfg.default_max_markup_bps)`; `markup_bps > cap` → `MarkupTooHigh`.
+10. Daily cap: `limit = storage::sender_limit(env, &sender)`; `spent_today + send_usdc > limit.daily_cap` → `DailyCapExceeded`; else `add_sender_spent`.
+11. Bond: `reserve = send_usdc * cfg.bond_ratio_bps / 10000`; `anchor.bond - anchor.reserved < reserve` → `InsufficientBond`; `anchor.reserved += reserve`; save anchor.
+12. Escrow: `token::Client::new(env, &cfg.usdc).transfer(&sender, &env.current_contract_address(), &quote.send_usdc)`.
+13. `id = next_order_id()`; save `Order { status: Open, opened_at: now, payout_deadline: now + cfg.payout_window_s, challenge_ends: 0, payout_ref: None, reserved_bond: reserve, .. }`; `emit_awarded`; return `id`.
+PR "Closes #6".
+
+### #7 open_order tests (M1, never-cut)
+Branch `abhiraj/7-open-order-tests`. Dev-dependency `ed25519-dalek = "2"`. Sign in tests:
+```rust
+use ed25519_dalek::{Signer, SigningKey};
+let sk = SigningKey::from_bytes(&[7u8; 32]);
+let pk = BytesN::from_array(&env, &sk.verifying_key().to_bytes());   // register_anchor signing_key
+let digest = client.quote_digest(&quote);
+let sig = BytesN::from_array(&env, &sk.sign(&digest.to_array()).to_bytes());
+```
+Tests (each a separate `#[test]`): happy path (sender −200, contract +200, `reserved` = 210, event `awarded`, order fields); signature from a different key → `try_open_order` is `Err`; quote altered after signing (landed_local +1) → `Err`; expired; reused request_id; oracle never set → `OracleUnavailable`; oracle stale (`set_price_at` old) → `OracleStale`; markup 6% → `MarkupTooHigh`; sender `max_markup_bps` lower than config respected; inactive anchor; wrong corridor; insufficient free bond; over daily cap; amounts ≤ 0. Use `env.ledger().set_timestamp(...)` (or `with_mut`) to control time. PR "Closes #7".
+
+### #13 Quote router (M2, never-cut)
+Branch `abhiraj/13-router`. Start with stub anchors (hardcoded JSON) before #12 lands.
+1. `POST /rfq` validation (corridor `MX_SPEI` only for now; sendUsdc > 0; sender is a valid G address).
+2. `requestId = randomBytes(32)`, `expiresAt = now + 120`.
+3. For each anchor in `deployments/testnet.json`: `POST {quoteUrl}/quote` with 4 s timeout (`AbortController`); ignore errors/503.
+4. For each response, validate: requestId/corridor/sendUsdc/expiresAt match what we asked; `quoteDigest` (shared helper) → verify signature with `Keypair.fromPublicKey(StrKey.encodeEd25519PublicKey(Buffer.from(anchor.signing_key)))`.`verify(digest, sig)` using the **on-chain** `get_anchor` signing key; markup vs oracle (same formula as #6); drop if markup > 300 bps; add reputation from `get_anchor`.
+5. Sort by `landedLocal` desc, return the 4.10 shape including `oracle.mxnPerUsd = 1 / (price / 1e14)` and `onRampFeeUsd: "0.00"` (sending app's fee, shown separately).
+6. `GET /anchors`, `GET /health`. CORS on.
+7. Test with `curl -X POST localhost:8787/rfq -H 'content-type: application/json' -d '{"corridor":"MX_SPEI","assetCode":"MXN","sendUsdc":"2000000000","sender":"G...","recipientCountry":"MX","method":"SPEI"}'`.
+PR "Closes #13".
+
+### #14 Fee sponsorship + onboarding (M2, never-cut)
+Branch `abhiraj/14-sponsor`. In the router.
+1. `POST /submit`: parse `TransactionBuilder.fromXDR(xdr, passphrase)`; enforce the allow-list in 4.10; build `TransactionBuilder.buildFeeBumpTransaction(sponsorKeypair, fee, inner, passphrase)` with a fee ≥ the inner tx fee (inner includes Soroban resource fee; check the SDK docs for the exact fee semantics); sign with sponsor; `rpc.Server.sendTransaction`; poll `getTransaction` until not `NOT_FOUND` (max ~30 s); return `{hash, status, explorerUrl, returnValue, errorCode}` (decode contract error code from the result if failed).
+2. `POST /onboard/fund`: Friendbot `https://friendbot.stellar.org?addr=<G>`; ok if already exists.
+3. `POST /onboard/usdc`: issuer pays 1,000 USDC (classic payment via Horizon) to the G address.
+4. Rate-limit per IP (simple in-memory) so the sponsor isn't drained.
+5. Test: an `open_order` from a fresh browser wallet succeeds and the sender pays 0 fees (check the tx on Stellar Expert: fee source = sponsor).
+6. Note "sponsored reserves" as stretch in README (Friendbot covers the account reserve on testnet).
+PR "Closes #14".
+
+### #17 Send page + demo wallet (M2, never-cut)
+Branch `abhiraj/17-send`. `web/src/lib/wallet.ts`: on first visit `Keypair.random()`, keep secret in `localStorage` (`raterace_demo_secret`; wrap in try/catch); onboarding = `/onboard/fund` → build+sign `changeTrust` USDC → `/submit` → `/onboard/usdc`. Show only "Setting up your account…" to the user. `web/src/pages/Send.tsx`: "You send" USD input (default 200), "They receive in" Mexico (SPEI), recipient name + 18-digit CLABE; `recipient_hash = sha256(JSON.stringify({name, clabe}))` via `crypto.subtle`, computed in the browser; raw details never sent to the chain or router. Button "See offers" → `POST /rfq` → navigate to `/quotes` with state. Mobile-first, large text, no crypto words. PR "Closes #17".
+
+### #18 Quote board + lock offer (M2, never-cut)
+Branch `abhiraj/18-quotes`. `web/src/pages/Quotes.tsx`: one card per `RankedQuote`: **family receives MX$X** (big), "X% below market rate" (markupBps/100), fee breakdown, track record (delivered / penalties), countdown from `expiresAt`; best card highlighted green "Best offer"; sending-app fee shown as a separate line. "Send with Alpha" → `client.open_order({ sender, quote, signature, recipient_hash, max_markup_bps: 300 })` (publicKey = sender) → `tx.sign({ signTransaction })` with the demo keypair → `POST /submit` with `tx.signed.toXDR()` (check `AssembledTransaction` docs for the exact property) → read returned order id → navigate `/order/:id`. Map error codes with `format.ts` (4.6). When the countdown ends: "Offers expired" + "Get new offers". PR "Closes #18".
+
+### #22 Demo script: rejections (M3)
+`scripts/demo-rejections.ts`: (1) admin `set_price_at(MXN, price, now - 3600)` → sign a valid quote → `open_order` simulation fails with `OracleStale` (23) → restore price; (2) sign a quote with landed 6% below market → fails with `MarkupTooHigh` (24). Print plain-English lines for the video. PR "Closes #22".
+
+### #25 Hosted live demo URL (M3)
+Pick hosts with the team on Sun 3 PM call (web: static host such as Vercel/Netlify/Cloudflare Pages; services: one Node host for router + anchors + indexer). Secrets only in the host's env settings. Update `VITE_*` URLs for production build. Done when a phone on mobile data completes a send. Add URL + QR to README. PR "Closes #25".
+
+---
+
+## 8. Avani: settlement side
+
+### Before #3 lands (start now, after #1)
+- Read: Soroban storage + TTL, `require_auth`, token interface (`transfer`), testing with `Env::default()` and `mock_all_auths`, `#[contractevent]`.
+- Start #16 indexer and #19 tracker against **fake data**: a hardcoded `OrderView[]` (4.10) served by the indexer, rendered by the tracker. Real data replaces it later.
+
+### #8 Settlement functions (M1, never-cut)
+Branch `avani/8-settlement`. File `settle.rs`. Follow the money rules in 4.7 exactly. For every function: load config + order (`OrderNotFound`), check status (`WrongStatus`), check time, then do transfers, then update anchor/order, save, emit.
+1. `mark_paid(anchor, order_id, payout_ref)`: `anchor.require_auth()`; `order.quote.anchor == anchor` else `NotOrderAnchor`; status Open; `now <= payout_deadline` else `DeadlinePassed`; transfer `send_usdc` contract → anchor; `status = Paid`, `payout_ref = Some`, `challenge_ends = now + challenge_window_s`; `filled += 1`; emit `paid`.
+2. `confirm(order_id)`: `order.sender.require_auth()`; status Paid (any time before or after window); `reserved -= reserved_bond`; Settled; emit `confirmed`.
+3. `release(order_id)`: status Paid; `now > challenge_ends` else `ChallengeWindowOpen`; release reserve; Settled; emit `released`.
+4. `dispute(order_id)`: sender auth; status Paid; `now <= challenge_ends` else `ChallengeWindowClosed`; Disputed; `disputed += 1`; emit `disputed`.
+5. `resolve(order_id, anchor_at_fault)`: admin auth; status Disputed; at fault → transfer `send_usdc + penalty` contract → sender, `bond -= send_usdc + penalty`, `reserved -= reserved_bond`, `slashed += 1`, Slashed, auto-suspend check; else release reserve, Settled; emit `resolved`.
+6. `refund_expired(order_id)`: status Open; `now > payout_deadline` else `DeadlineNotPassed`; transfer `send_usdc + penalty` → sender; `bond -= penalty`; `reserved -= reserved_bond`; `slashed += 1`; Refunded; auto-suspend check; emit `refunded`.
+7. `get_order`.
+8. A private helper `apply_slash(env, cfg, anchor_addr, anchor)` for the shared slash + auto-suspend logic.
+PR "Closes #8".
+
+### #9 Settlement tests (M1, never-cut)
+Branch `avani/9-settlement-tests`. Use `test/helpers.rs` (`Setup`) and a helper `open_test_order()` that signs a quote (same `ed25519-dalek` pattern as #7). Tests: open → mark_paid → confirm (balances: anchor +200, reserved back to 0); open → mark_paid → wait → release; mark_paid twice → `WrongStatus`; mark_paid by another anchor → `NotOrderAnchor`; mark_paid after deadline → `DeadlinePassed`; release before window → `ChallengeWindowOpen`; dispute after window → `ChallengeWindowClosed`; resolve at fault: sender gets 210 back, bond −210, slashed 1, anchor auto-suspended; resolve not at fault: Settled; refund before deadline → `DeadlineNotPassed`; refund after: sender gets 210, bond −10, reserved released, anchor suspended; refund twice → `WrongStatus`; contract USDC balance always equals sum(bond) + escrowed Open orders. PR "Closes #9".
+
+### #11 Testnet smoke run (M1 gate, never-cut)
+Branch `avani/11-smoke`. `scripts/smoke.ts` using `raterace-client` + `.env`:
+1. Path 1: build an alpha quote (same code as #12, or call the anchor service if running), `open_order` as demo-sender, `mark_paid` as alpha, wait `challenge_window_s + 5`, `release`; assert Settled.
+2. Path 2: gamma quote, `open_order`, wait `payout_window_s + 5`, `refund_expired`; assert Refunded, gamma slashed and inactive.
+3. Print each step with its Stellar Expert link. Paste the output in the issue. **M1 is done when this passes.**
+4. Note: Path 2 suspends gamma. Add `--reset-gamma` flag that calls admin `set_active(gamma, true)` and tops up its bond so the demo can run again.
+PR "Closes #11".
+
+### #15 Payout worker (M2, never-cut)
+Branch `avani/15-payout`. `anchors/src/payout/worker.ts`, one loop per honest anchor (alpha delay 10 s, beta 20 s; gamma none).
+1. Cursor: start at `DEPLOY_LEDGER`, persist last processed ledger in `anchors/.cursor-<name>.json` (gitignored).
+2. Every 4 s: RPC `getEvents` for the RateRace contract from the cursor; decode with `scValToNative`; keep `awarded` events whose `anchor` = me.
+3. For each: wait the delay, create a fake receipt `{orderId, clabeHashPrefix, amountMxn, speiTrackingId: random, paidAt}`, `payout_ref = sha256(JSON)`, call `mark_paid` signed by the anchor key (anchor pays its own fee); log the Stellar Expert link; on `DeadlinePassed` log and skip.
+4. Idempotent: before calling, `get_order` and skip if not Open.
+5. `npm run dev:anchors` starts quote servers + workers together.
+PR "Closes #15".
+
+### #16 Indexer (M2, cuttable)
+Branch `avani/16-indexer`. `indexer/src/index.ts`:
+1. Poll `getEvents` from `DEPLOY_LEDGER` every 3 s for the RateRace contract (paginate with cursor).
+2. Fold events into `Map<orderId, OrderView>` and per-anchor stats; for amounts that events don't carry (bond/reserved), call `get_anchor`/`get_order` after each relevant event.
+3. Endpoints from 4.10. Persist to `indexer/data.json` (gitignored) so restarts are fast.
+4. Note in README: RPC only keeps recent events; for production we'd use a full indexer.
+Cut fallback: web calls `get_order` / `get_anchor` directly.
+PR "Closes #16".
+
+### #19 Order tracker (M2, never-cut)
+Branch `avani/19-tracker`. `web/src/pages/Order.tsx` for `/order/:id`, polling the indexer every 3 s (fallback `get_order`):
+- Steps in plain words: "Offer locked, money held safely" → "Family paid MX$3,937.00" → "Done". Alternatives: "Provider missed the deadline: refunded $210.00 (includes $10 penalty)"; "Problem reported"; "Provider penalised".
+- Countdown to `payoutDeadline` while Open; to `challengeEnds` while Paid.
+- "View proof on Stellar" link per tx.
+- Buttons (signed by the demo wallet, sent via `/submit`): "Money arrived" (`confirm`), "Report a problem" (`dispute`, only within window), "Get my refund" (`refund_expired`, after the deadline).
+PR "Closes #19".
+
+### #23 Demo script: Gamma fails → refund + slash (M3)
+`scripts/demo-gamma.ts`: reset gamma (active + bond), get offers from the router, pick gamma, open order, wait past deadline, `refund_expired`, print before/after balances, bond and slashed count with links. Runs in under 3 minutes with demo windows. PR "Closes #23".
+
+### #26 Demo video (M4, never-cut)
+Record the section 1 demo story in ~60 s from the live app (no slides). Show at least one Stellar Expert transaction page and one contract event. Screen-record (QuickTime or similar), trim, add 3–4 short captions. Upload YouTube **unlisted**; check the link in a logged-out browser; give the link to Pranav for the README and Devpost.
+
+---
+
+## 9. Shared tasks
+
+### #1 Toolchain (everyone, M0)
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+rustup target add wasm32v1-none
+brew install stellar-cli            # Windows: winget install --id Stellar.StellarCLI
+node -v                             # must be >= 22.12 (brew install node@22 if not)
+stellar --version                   # 30.x
+```
+macOS: if Homebrew warns about outdated Command Line Tools, update them in System Settings → Software Update (Rust needs them to link). Comment versions on issue #1.
+
+### #27 Final redeploy + dry runs (everyone, M4)
+Fresh `npm run deploy`, share new `.env`, update README contract IDs, run the full demo twice on the showcase laptop, check no secrets in git history (`git log -p | grep -E "S[A-Z2-7]{55}"` must print nothing), freeze `main` Mon 12:00 PM.
+
+---
+
+## 10. Local run (once M2 is done)
+
+```bash
+npm install
+npm run build:contracts
+npm run bindings            # only after contract changes
+# .env from Pranav in repo root
+npm run dev:anchors         # quote servers 8801-8803 + payout workers
+npm run dev:indexer         # 8790
+npm run dev:router          # 8787
+npm run dev:web             # 5173 -> open http://localhost:5173
+```
+
+## 11. Cut order (if behind at a sync call)
+
+Cut in this order: **#21 leaderboard → #20 admin UI (use scripts) → dispute/resolve UI (keep contract functions + tests) → #16 indexer (web polls getters) → #25 live URL (demo from laptop)**.
+**Never cut:** signature verification, escrow, bond reservation, oracle markup check, testnet deployment, README with contract IDs, demo video.
+
+## 12. Prompt to give your AI assistant (copy, fill in your name)
+
+```
+You are helping <NAME> build their part of RateRace, a Stellar/Soroban hackathon project,
+with two teammates working in parallel. Read docs/BUILD_PLAN.md completely before doing anything.
+
+My tasks are in section <6 | 7 | 8> plus section 9. We work on one GitHub issue at a time.
+Today's issue: #<N>.
+
+Rules:
+1. Section 4 (Frozen interfaces) is binding: use those exact names, types, fields, error codes,
+   events, ports, env variables and JSON shapes. Never change them; if something seems wrong,
+   stop and tell me so I can raise it with the team (section 4.11).
+2. Only edit files I own (section 2 file ownership table). If another file must change, stop and tell me.
+3. Use the pinned versions in 4.1. Do not guess SDK APIs or CLI flags: check developers.stellar.org,
+   docs.rs/soroban-sdk/29.0.1, the @stellar/stellar-sdk docs, or `stellar <cmd> --help`, and say
+   when something is unverified.
+4. Write code that compiles and runs. After each step, give me the exact command to verify it
+   (cargo test, stellar contract build, npm run ..., curl ...), and wait for my output.
+5. Go one step at a time. Small commits. Follow section 5 git workflow exactly; never commit
+   .env, secrets, target/, node_modules/.
+6. Every contract failure path needs a unit test. Use checked math. No personal data on-chain.
+7. Never invent facts, results, quotes or contract IDs.
+Start by summarising the issue's goal, the files you will touch, and your step plan, then wait.
+```
+
+## 13. Known pitfalls
+
+- **Signature failure traps** (no error code) → tests use `try_` methods and `is_err()`.
+- **Never hand-encode XDR in JS.** Use `quoteDigest()` (contract simulation).
+- **Bytes conversions** in SDK 29 (`BytesN<32>` ↔ `Bytes`, `Hash<32>` from `sha256`): check docs.rs for the exact method if `.into()` fails.
+- **Testnet resets** wipe everything: just re-run `npm run deploy` and re-share `.env`.
+- **RPC event retention is limited**: indexer and workers start from `DEPLOY_LEDGER`; if it's too old, redeploy or start from the latest ledger.
+- **Browser `Buffer`**: polyfill in `main.tsx`.
+- **zsh**: pasting commands with `# comments` errors ("command not found: #"); paste commands without comments or run scripts with `bash`.
+- **Simulation before send**: every contract call is simulated first; read the simulation error code and show the 4.6 message instead of a raw error.
+- **Time**: the contract uses ledger time (≈ every 5 s); allow a few seconds of slack in scripts that wait for deadlines.
+- **Penalty demo maths** at $200: reserve $210, penalty $10, refund total $210.
