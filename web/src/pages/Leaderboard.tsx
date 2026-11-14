@@ -1,9 +1,6 @@
-// Owner: Pranav (issue #21). See docs/BUILD_PLAN.md.
+// Owner: Pranav (issue #21). Build this page from the components shown on /design.
+import { PageHeader } from "@/components/PageHeader";
+
 export default function Leaderboard() {
-  return (
-    <section className="card">
-      <h1>Providers</h1>
-      <p className="muted">Coming soon: each provider's delivery record.</p>
-    </section>
-  );
+  return <PageHeader title="Providers" lead="This screen is being built." />;
 }

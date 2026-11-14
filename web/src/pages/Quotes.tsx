@@ -1,9 +1,6 @@
-// Owner: Abhiraj (issue #18). See docs/BUILD_PLAN.md.
+// Owner: Abhiraj (issue #18). Build this page from the components shown on /design.
+import { PageHeader } from "@/components/PageHeader";
+
 export default function Quotes() {
-  return (
-    <section className="card">
-      <h1>Offers for your transfer</h1>
-      <p className="muted">Coming soon: providers compete on what your family receives.</p>
-    </section>
-  );
+  return <PageHeader title="Offers for your transfer" lead="This screen is being built." />;
 }
