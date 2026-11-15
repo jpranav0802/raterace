@@ -1,0 +1,47 @@
+# Hosted demo backend (issue #25). See docs/HOSTING.md.
+# Render reads this file when you create a "Blueprint" from the repo. Secrets are marked
+# sync: false, so Render asks for them in its dashboard; they are never stored in git.
+services:
+  - type: web
+    name: raterace-router
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev
+    # Router (public, on $PORT) + 3 mock anchor quote servers + mock oracle keeper.
+    startCommand: npm run start:hosted -w @raterace/scripts
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SPONSOR_SECRET
+        sync: false
+      - key: USDC_ISSUER_SECRET
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+      - key: MOCK_MXN_USD_PRICE
+        sync: false
+      - key: ALPHA_QUOTE_SECRET
+        sync: false
+      - key: BETA_QUOTE_SECRET
+        sync: false
+      - key: GAMMA_QUOTE_SECRET
+        sync: false
+      # Anchor account keys, for the payout workers (they call mark_paid).
+      - key: ALPHA_SECRET
+        sync: false
+      - key: BETA_SECRET
+        sync: false
+      - key: GAMMA_SECRET
+        sync: false
+
+  - type: web
+    name: raterace-indexer
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev
+    startCommand: npm run start -w @raterace/indexer
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
