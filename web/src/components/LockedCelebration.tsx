@@ -1,6 +1,6 @@
 // The moment the offer is locked: money is in escrow, the provider's bond is at stake,
 // and the sender paid nothing in fees. Every number comes from the order read back on-chain.
-import { formatMxn, formatUsd } from "@raterace/shared";
+import { formatMxn, fromUnits } from "@raterace/shared";
 import { motion, useReducedMotion } from "motion/react";
 import { Link } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
@@ -17,6 +17,10 @@ export interface LockedInfo {
   /** From the on-chain order, when it could be read back. */
   reservedBond?: string;
   payoutDeadline?: number;
+}
+
+function usdc(units: string) {
+  return Number(fromUnits(units)).toLocaleString("en-US", { minimumFractionDigits: 2 });
 }
 
 function Tile({ label, value, tone, delay }: { label: string; value: string; tone?: "good"; delay: number }) {
@@ -98,10 +102,10 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
 
         <div className="mt-8 grid grid-cols-2 gap-2.5 text-left">
           <Tile label="Network fees you paid" value="$0.00" tone="good" delay={0.75} />
-          <Tile label="Held safely in escrow" value={`${formatUsd(info.sendUsdc)} USDC`} delay={0.85} />
+          <Tile label="Held safely in escrow" value={`${usdc(info.sendUsdc)} USDC`} delay={0.85} />
           <Tile
             label={`${info.provider}'s bond at stake`}
-            value={info.reservedBond ? `${formatUsd(info.reservedBond)} USDC` : "Reserved"}
+            value={info.reservedBond ? `${usdc(info.reservedBond)} USDC` : "Reserved"}
             delay={0.95}
           />
           <motion.div

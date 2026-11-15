@@ -127,22 +127,26 @@ function LaneRow({
         >
           {selected && <span className="size-2.5 rounded-full bg-foreground" />}
         </span>
-        <span className="flex min-w-0 flex-1 items-center gap-2 font-medium">
+        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 font-medium">
           {lane.name}
           {winner && (
             <motion.span initial={reduce ? false : { scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-              <Badge variant="good">Best offer</Badge>
+              <Badge variant="good" className="whitespace-nowrap">Best offer</Badge>
             </motion.span>
           )}
         </span>
         <span
           className={cn(
-            "money text-xl font-semibold tracking-tight transition-colors duration-500",
+            "money shrink-0 text-lg font-semibold tracking-tight transition-colors duration-500 sm:text-xl",
             winner && "text-good",
             !valid && "text-bad line-through decoration-2",
           )}
         >
-          {valid ? mxn(shown) : lane.landed ? mxn(lane.landed) : "—"}
+          {valid
+            ? finished || lane.landed - shown < 0.005
+              ? formatMxn(lane.quote!.landedLocal)
+              : mxn(shown)
+            : "—"}
         </span>
       </div>
 

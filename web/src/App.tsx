@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { OnStellarPanel, OnStellarSheet } from "@/components/OnStellar";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,12 @@ const navLink = ({ isActive }: { isActive: boolean }) =>
 const LIVE_ROUTES = /^\/(send|quotes|order)(\/|$)/;
 
 export default function App() {
-  const live = LIVE_ROUTES.test(useLocation().pathname);
+  const { pathname } = useLocation();
+  const live = LIVE_ROUTES.test(pathname);
+  // Each screen starts at the top (the router keeps the old scroll position otherwise).
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
   return (
     <div className="flex min-h-dvh flex-col">
       <header
