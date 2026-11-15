@@ -24,7 +24,9 @@
     "deploy": "npm run deploy -w @raterace/scripts --",
     "bindings": "bash scripts/bindings.sh",
     "check": "npm run check -w @raterace/scripts",
-    "try-quote": "npm run try-quote -w @raterace/scripts"
+    "try-quote": "npm run try-quote -w @raterace/scripts",
+    "send": "npm run send -w @raterace/scripts --",
+    "dev:backend": "npm run start:hosted -w @raterace/scripts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
