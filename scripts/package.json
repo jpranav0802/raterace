@@ -10,7 +10,9 @@
     "demo:rejections": "tsx demo-rejections.ts",
     "typecheck": "tsc --noEmit -p .",
     "check": "tsx check.ts",
-    "try-quote": "tsx try-quote.ts"
+    "try-quote": "tsx try-quote.ts",
+    "oracle:keeper": "tsx oracle-keeper.ts",
+    "start:hosted": "tsx start-hosted.ts"
   },
   "dependencies": {
     "@raterace/shared": "*",
