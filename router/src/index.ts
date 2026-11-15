@@ -117,7 +117,8 @@ function send(res: Response, e: unknown) {
 // ---------- GET /health ----------
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "router" });
+  // The web app reads the USDC asset from here to build the trustline the user signs.
+  res.json({ ok: true, service: "router", usdc: { code: USDC_CODE, issuer: USDC_ISSUER } });
 });
 
 // ---------- POST /rfq (#13) ----------
