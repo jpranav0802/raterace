@@ -12,7 +12,8 @@
     "check": "tsx check.ts",
     "try-quote": "tsx try-quote.ts",
     "oracle:keeper": "tsx oracle-keeper.ts",
-    "start:hosted": "tsx start-hosted.ts"
+    "start:hosted": "tsx start-hosted.ts",
+    "send": "tsx send.ts"
   },
   "dependencies": {
     "@raterace/shared": "*",
