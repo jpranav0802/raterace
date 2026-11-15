@@ -1,6 +1,6 @@
 // Owner: Abhiraj (issue #17). Built from the components shown on /design.
-import { ASSET_MXN, CORRIDOR_MX_SPEI, toUnits, type RfqRequest } from "@raterace/shared";
-import { useState, type FormEvent } from "react";
+import { ASSET_MXN, CORRIDOR_MX_SPEI, formatMxn, marketLocal, toUnits, type RfqRequest } from "@raterace/shared";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { AmountField } from "@/components/AmountField";
 import { PageHeader } from "@/components/PageHeader";
@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { api, type Market } from "@/lib/api";
+import { chainlog } from "@/lib/chainlog";
+import { narrateRfq } from "@/lib/narrate";
 import { recipientHash, savePending, type PendingTransfer } from "@/lib/transfer";
 import { ensureReady } from "@/lib/wallet";
 
@@ -31,6 +33,23 @@ function clabeError(value: string): string | null {
   return null;
 }
 
+function MarketPill({ market }: { market: Market | null }) {
+  if (!market) return null;
+  const mins = Math.round(market.ageS / 60);
+  return (
+    <div className="mb-5 inline-flex items-center gap-2 rounded-full border bg-card/60 px-3 py-1 text-xs text-muted-foreground">
+      <span className="relative flex size-1.5">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-70" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-good" />
+      </span>
+      <span>
+        Live market rate <span className="money text-foreground">1 USD = {market.mxnPerUsd.toFixed(2)} MXN</span>
+      </span>
+      <span className="hidden sm:inline">· on-chain oracle · {mins < 1 ? "just now" : `${mins} min ago`}</span>
+    </div>
+  );
+}
+
 export default function Send() {
   const navigate = useNavigate();
   const [amount, setAmount] = useState("200");
@@ -39,6 +58,23 @@ export default function Send() {
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [market, setMarket] = useState<Market | null>(null);
+
+  // The live market rate, straight from the on-chain oracle (refreshed every 30 s).
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .market()
+        .then((m) => alive && setMarket(m))
+        .catch(() => alive && setMarket(null));
+    load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   const errors = {
     amount: amountError(amount),
@@ -66,7 +102,13 @@ export default function Send() {
         recipientCountry: "MX",
         method: "SPEI",
       };
-      const [rfq, hash] = await Promise.all([api.rfq(request), recipientHash(name.trim(), clabe)]);
+      const hash = await recipientHash(name.trim(), clabe);
+      chainlog.add({
+        title: "Recipient fingerprinted on this device",
+        detail: `sha256 ${hash.slice(0, 10)}…${hash.slice(-6)} · name and CLABE never leave the browser`,
+      });
+      const rfq = await api.rfq(request);
+      narrateRfq(rfq);
       if (rfq.quotes.length === 0) {
         setError("No provider can take this transfer right now. Try a different amount.");
         return;
@@ -85,14 +127,24 @@ export default function Send() {
 
   return (
     <form onSubmit={onSubmit} noValidate>
+      <MarketPill market={market} />
       <PageHeader
-        title="Send money home"
-        lead="Providers compete to give your family the most pesos. You pick the best offer."
+        title="Providers race to pay your family more."
+        lead="Licensed providers bid on every transfer. A smart contract checks each offer against the live market rate and holds your money until it's delivered."
       />
 
       <Card className="flex flex-col gap-6">
         <AmountField label="You send" symbol="$" currency="USD" value={amount} onChange={setAmount} />
         {show("amount") && <p className="-mt-3 text-sm text-bad">{errors.amount}</p>}
+        {market && !errors.amount && (
+          <p className="-mt-3 text-sm text-muted-foreground">
+            At the market rate:{" "}
+            <span className="money font-medium text-foreground">
+              {formatMxn(marketLocal(toUnits(amount), BigInt(market.price)))}
+            </span>
+            . Providers race to get as close to this as they can.
+          </p>
+        )}
         <div className="border-t" />
         <div>
           <p className="text-sm text-muted-foreground">They receive in</p>

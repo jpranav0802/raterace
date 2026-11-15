@@ -5,6 +5,7 @@
 //   POST /submit         sponsor (fee-bump) a sender-signed transaction so the sender pays no fees (#14)
 //   POST /onboard/fund   create a demo account with Friendbot (#14)
 //   POST /onboard/usdc   send 1,000 test USDC to a demo account (#14)
+//   GET  /market         the oracle MXN price and its age
 //   GET  /health
 //
 // The router never holds user funds and cannot forge quotes: every quote is checked against
@@ -121,9 +122,37 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "router", usdc: { code: USDC_CODE, issuer: USDC_ISSUER } });
 });
 
+// ---------- GET /market ----------
+// The oracle's current MXN price, for showing the live market rate before quotes are asked.
+
+app.get("/market", async (_req, res) => {
+  try {
+    const price = await oraclePrice(oracle, ASSET_MXN);
+    if (!price) throw new HttpError(503, "Market rate unavailable");
+    res.json({
+      price: price.price.toString(),
+      timestamp: price.timestamp,
+      mxnPerUsd: localPerUsd(price.price),
+      ageS: Math.max(0, Math.floor(Date.now() / 1000) - price.timestamp),
+    });
+  } catch (e) {
+    send(res, e);
+  }
+});
+
 // ---------- POST /rfq (#13) ----------
 
 type AnchorQuoteResponse = { raterace?: { quote?: Omit<QuoteJson, "signature">; signature?: string } };
+
+/** Extra, optional field on the /rfq response: what happened with each anchor (for the demo's live view). */
+type AuditOutcome = "verified" | "no-quote" | "mismatch" | "bad-signature" | "inactive" | "over-cap" | "error";
+interface AuditRow {
+  name: string;
+  displayName: string;
+  ms: number;
+  outcome: AuditOutcome;
+  markupBps?: number;
+}
 
 app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
   try {
@@ -144,8 +173,16 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
     if (!price) throw new HttpError(503, "Market rate unavailable, try again in a minute");
 
     // Ask every anchor in parallel; any that fail, time out or return 503 are skipped.
+    const audit: AuditRow[] = [];
     const settled = await Promise.allSettled(
       deployment.anchors.map(async (a): Promise<RankedQuote | null> => {
+        const t0 = Date.now();
+        const row: AuditRow = { name: a.name, displayName: a.displayName, ms: 0, outcome: "error" };
+        audit.push(row);
+        const done = (outcome: AuditOutcome) => {
+          row.outcome = outcome;
+          return null;
+        };
         const r = await fetch(`${a.quoteUrl}/quote`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -158,11 +195,12 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
           }),
           signal: AbortSignal.timeout(ANCHOR_TIMEOUT_MS),
         });
-        if (!r.ok) return null;
+        row.ms = Date.now() - t0;
+        if (!r.ok) return done("no-quote");
         const json = (await r.json()) as AnchorQuoteResponse;
         const quote = json.raterace?.quote;
         const signature = json.raterace?.signature;
-        if (!quote || typeof signature !== "string" || !/^[0-9a-f]{128}$/.test(signature)) return null;
+        if (!quote || typeof signature !== "string" || !/^[0-9a-f]{128}$/.test(signature)) return done("no-quote");
 
         // The quote must be exactly what we asked for, from the anchor we asked.
         if (
@@ -175,7 +213,7 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
           !/^\d+$/.test(quote.landedLocal)
         ) {
           console.warn(`[router] ${a.name}: quote doesn't match the request, skipped`);
-          return null;
+          return done("mismatch");
         }
 
         // Verify the signature like the contract will: digest from the contract,
@@ -184,15 +222,17 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
           quoteDigest(raterace, toContractQuote(quote)),
           raterace.get_anchor({ anchor: a.address }).then((t) => t.result.unwrap()),
         ]);
-        if (!onChain.active) return null;
+        if (!onChain.active) return done("inactive");
         const key = Keypair.fromPublicKey(StrKey.encodeEd25519PublicKey(Buffer.from(onChain.signing_key)));
         if (!key.verify(digest, Buffer.from(hexToBytes(signature)))) {
           console.warn(`[router] ${a.name}: invalid signature, skipped`);
-          return null;
+          return done("bad-signature");
         }
 
         const markup = markupBps(sendUsdc, BigInt(quote.landedLocal), price.price);
-        if (markup > MAX_MARKUP_BPS) return null;
+        row.markupBps = markup;
+        if (markup > MAX_MARKUP_BPS) return done("over-cap");
+        row.outcome = "verified";
 
         return {
           ...quote,
@@ -212,7 +252,8 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
       .filter((q): q is RankedQuote => q !== null)
       .sort((x, y) => (BigInt(y.landedLocal) > BigInt(x.landedLocal) ? 1 : BigInt(y.landedLocal) < BigInt(x.landedLocal) ? -1 : 0));
 
-    const out: RfqResponse = {
+    const out: RfqResponse & { audit: AuditRow[] } = {
+      audit,
       requestId,
       expiresAt,
       oracle: { price: price.price.toString(), timestamp: price.timestamp, mxnPerUsd: localPerUsd(price.price) },
@@ -373,12 +414,18 @@ app.post("/onboard/fund", rateLimit("fund", 5, 60 * 60_000), async (req, res) =>
       /* not found: create it */
     }
     const r = await fetch(`${TESTNET.friendbotUrl}?addr=${encodeURIComponent(pk)}`);
+    const text = await r.text();
     if (!r.ok) {
       // Friendbot returns 400 if the account already exists (race with another request).
-      const text = await r.text();
       if (!/createAccountAlreadyExist|already exists/i.test(text)) throw new HttpError(502, "Friendbot failed, try again");
     }
-    res.json({ ok: true });
+    let hash: string | undefined;
+    try {
+      hash = (JSON.parse(text) as { hash?: string }).hash;
+    } catch {
+      /* not JSON: fine */
+    }
+    res.json({ ok: true, hash });
   } catch (e) {
     send(res, e);
   }

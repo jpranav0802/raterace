@@ -27,10 +27,29 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   return json;
 }
 
+/** Optional extra on the router's /rfq response: what happened with each provider. */
+export interface AuditRow {
+  name: string;
+  displayName: string;
+  /** How long the provider took to answer, ms. */
+  ms: number;
+  outcome: "verified" | "no-quote" | "mismatch" | "bad-signature" | "inactive" | "over-cap" | "error";
+  markupBps?: number;
+}
+export type RfqWithAudit = RfqResponse & { audit?: AuditRow[] };
+
+export interface Market {
+  price: string;
+  timestamp: number;
+  mxnPerUsd: number;
+  ageS: number;
+}
+
 export const api = {
   health: () => call<{ ok: boolean; usdc: { code: string; issuer: string } }>("/health"),
-  fund: (publicKey: string) => call<{ ok: boolean }>("/onboard/fund", { publicKey }),
-  usdc: (publicKey: string) => call<{ ok: boolean }>("/onboard/usdc", { publicKey }),
-  rfq: (req: RfqRequest) => call<RfqResponse>("/rfq", req),
+  market: () => call<Market>("/market"),
+  fund: (publicKey: string) => call<{ ok: boolean; existed?: boolean; hash?: string }>("/onboard/fund", { publicKey }),
+  usdc: (publicKey: string) => call<{ ok: boolean; hash?: string }>("/onboard/usdc", { publicKey }),
+  rfq: (req: RfqRequest) => call<RfqWithAudit>("/rfq", req),
   submit: (xdr: string) => call<SubmitResponse>("/submit", { xdr }),
 };
