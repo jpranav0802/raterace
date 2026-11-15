@@ -45,7 +45,28 @@ export interface Market {
   ageS: number;
 }
 
+export interface Benchmark {
+  name: string;
+  type: string;
+  feeUsd: number;
+  rate: number;
+  receivedLocal: string;
+  markupBps: number;
+  wouldPassCap: boolean;
+  collectedAt: string;
+}
+export interface Benchmarks {
+  source: string;
+  sourceUrl: string;
+  fetchedAt: number;
+  sendUsdc: string;
+  oracle: { price: string; mxnPerUsd: number };
+  marketLocal: string;
+  providers: Benchmark[];
+}
+
 export const api = {
+  benchmarks: (sendUsdc: string) => call<Benchmarks>(`/benchmarks?sendUsdc=${encodeURIComponent(sendUsdc)}`),
   health: () => call<{ ok: boolean; usdc: { code: string; issuer: string } }>("/health"),
   market: () => call<Market>("/market"),
   fund: (publicKey: string) => call<{ ok: boolean; existed?: boolean; hash?: string }>("/onboard/fund", { publicKey }),

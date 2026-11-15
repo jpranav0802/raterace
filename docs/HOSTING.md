@@ -48,7 +48,8 @@ Secrets live only in Render's dashboard. Nothing secret goes to Vercel. `VITE_*`
 
 ## Things that bite
 
-- **Price goes stale.** The contract refuses any order whose market price is older than 10 minutes. The keeper re-stamps it every 4 minutes.
+- **Price goes stale.** The contract refuses any order whose market price is older than 10 minutes. Every 4 minutes the keeper writes the live USD/MXN mid-market rate (Wise's public mid-market rate, falling back to ECB via Frankfurter). That keeps the price fresh and real.
+  - A price set from `/admin` is replaced within 4 minutes. Set `ORACLE_SOURCE=hold` to keep a manual price and only re-stamp it.
   - It deliberately leaves a price older than 30 minutes alone, so the "make price stale" demo from `/admin` or `npm run demo:rejections` keeps working until you restore it.
   - It always refreshes on start.
 - **Free Render services sleep** after 15 minutes without visitors. The first request then takes about 50 seconds.

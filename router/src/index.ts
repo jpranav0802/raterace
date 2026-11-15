@@ -6,6 +6,7 @@
 //   POST /onboard/fund   create a demo account with Friendbot (#14)
 //   POST /onboard/usdc   send 1,000 test USDC to a demo account (#14)
 //   GET  /market         the oracle MXN price and its age
+//   GET  /benchmarks     real providers' live quotes for the same amount, checked against the 3% rule
 //   GET  /health
 //
 // The router never holds user funds and cannot forge quotes: every quote is checked against
@@ -38,6 +39,8 @@ import {
   hexToBytes,
   localPerUsd,
   markupBps,
+  marketLocal,
+  toUnits,
   type QuoteJson,
   type RankedQuote,
   type RfqResponse,
@@ -135,6 +138,88 @@ app.get("/market", async (_req, res) => {
       mxnPerUsd: localPerUsd(price.price),
       ageS: Math.max(0, Math.floor(Date.now() / 1000) - price.timestamp),
     });
+  } catch (e) {
+    send(res, e);
+  }
+});
+
+// ---------- GET /benchmarks ----------
+// Real providers' live quotes for the same transfer, from Wise's public comparison data,
+// each run through the contract's own markup formula against our oracle price. Shows where
+// today's real market lands and which offers RateRace's 3% rule would reject on-chain.
+
+interface Benchmark {
+  name: string;
+  type: string;
+  feeUsd: number;
+  /** Exchange rate the provider applies, MXN per USD. */
+  rate: number;
+  /** What the family receives, MXN units (7 decimals). */
+  receivedLocal: string;
+  /** Below market, same formula as the contract (negative = better than market). */
+  markupBps: number;
+  wouldPassCap: boolean;
+  collectedAt: string;
+}
+interface BenchmarksResponse {
+  source: string;
+  sourceUrl: string;
+  fetchedAt: number;
+  sendUsdc: string;
+  oracle: { price: string; mxnPerUsd: number };
+  marketLocal: string;
+  providers: Benchmark[];
+}
+const benchmarkCache = new Map<string, { at: number; data: BenchmarksResponse }>();
+const BENCHMARK_TTL_MS = 5 * 60_000;
+
+app.get("/benchmarks", rateLimit("benchmarks", 30, 60_000), async (req, res) => {
+  try {
+    const sendUsdc = String(req.query.sendUsdc ?? "");
+    if (!/^\d+$/.test(sendUsdc) || BigInt(sendUsdc) <= 0n) throw new HttpError(400, "sendUsdc must be a positive integer string");
+    const cached = benchmarkCache.get(sendUsdc);
+    if (cached && Date.now() - cached.at < BENCHMARK_TTL_MS) {
+      res.json(cached.data);
+      return;
+    }
+    const price = await oraclePrice(oracle, ASSET_MXN);
+    if (!price) throw new HttpError(503, "Market rate unavailable");
+    const send = BigInt(sendUsdc);
+    const sourceUrl = `https://api.wise.com/v4/comparisons/?sourceCurrency=USD&targetCurrency=MXN&sendAmount=${fromUnits(send, 2)}`;
+    const r = await fetch(sourceUrl, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+    if (!r?.ok) throw new HttpError(502, "Live provider prices are unavailable right now");
+    const j = (await r.json()) as {
+      providers?: { name: string; type: string; quotes: { fee: number; rate: number; receivedAmount: number; dateCollected: string }[] }[];
+    };
+    const providers: Benchmark[] = (j.providers ?? [])
+      .filter((p) => p.quotes?.[0] && p.quotes[0].receivedAmount > 0)
+      .map((p) => {
+        const q = p.quotes[0];
+        const receivedLocal = toUnits(q.receivedAmount.toFixed(2));
+        const m = markupBps(send, receivedLocal, price.price);
+        return {
+          name: p.name,
+          type: p.type,
+          feeUsd: q.fee,
+          rate: q.rate,
+          receivedLocal: receivedLocal.toString(),
+          markupBps: m,
+          wouldPassCap: m <= MAX_MARKUP_BPS,
+          collectedAt: q.dateCollected,
+        };
+      })
+      .sort((a, b) => (BigInt(b.receivedLocal) > BigInt(a.receivedLocal) ? 1 : -1));
+    const data: BenchmarksResponse = {
+      source: "Wise public comparison data",
+      sourceUrl,
+      fetchedAt: Math.floor(Date.now() / 1000),
+      sendUsdc,
+      oracle: { price: price.price.toString(), mxnPerUsd: localPerUsd(price.price) },
+      marketLocal: marketLocal(send, price.price).toString(),
+      providers,
+    };
+    benchmarkCache.set(sendUsdc, { at: Date.now(), data });
+    res.json(data);
   } catch (e) {
     send(res, e);
   }

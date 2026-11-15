@@ -2,15 +2,16 @@
 import { contract, rpc } from "@stellar/stellar-sdk";
 import { formatBps, formatMxn, formatUsd, hexToBytes, marketLocal, toUnits, type RankedQuote } from "@raterace/shared";
 import { RateRaceClient, toContractQuote } from "@raterace/shared/chain";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
 import { LockedCelebration, type LockedInfo } from "@/components/LockedCelebration";
 import { PageHeader } from "@/components/PageHeader";
 import { RaceTrack } from "@/components/RaceTrack";
+import { RealMarket } from "@/components/RealMarket";
 import { Receipt } from "@/components/Receipt";
 import { Button } from "@/components/ui/button";
-import { api, type RfqWithAudit } from "@/lib/api";
+import { api, type Benchmarks, type RfqWithAudit } from "@/lib/api";
 import { chainlog } from "@/lib/chainlog";
 import { config } from "@/lib/config";
 import { errorMessage } from "@/lib/format";
@@ -127,7 +128,23 @@ export default function Quotes() {
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState<LockedInfo | null>(null);
 
+  const [benchmarks, setBenchmarks] = useState<Benchmarks | null>(null);
+
   const onExpire = useCallback(() => setExpired(true), []);
+
+  // Real providers' live prices for the same amount, for the comparison below the race.
+  const sendUsdc = transfer?.request.sendUsdc;
+  useEffect(() => {
+    if (!sendUsdc) return;
+    let alive = true;
+    api
+      .benchmarks(sendUsdc)
+      .then((b) => alive && setBenchmarks(b))
+      .catch(() => alive && setBenchmarks(null));
+    return () => {
+      alive = false;
+    };
+  }, [sendUsdc]);
 
   if (!transfer) {
     return (
@@ -217,6 +234,15 @@ export default function Quotes() {
           <Countdown until={rfq.expiresAt} label="Offers held for" expiredLabel="Offers expired." onExpire={onExpire} />
         )}
       </div>
+
+      {benchmarks && benchmarks.providers.length > 0 && (
+        <div className="mt-6">
+          <RealMarket
+            data={benchmarks}
+            ours={{ provider: picked.displayName, landedLocal: picked.landedLocal, markupBps: picked.markupBps }}
+          />
+        </div>
+      )}
 
       <div className="mt-6">
         <Receipt
