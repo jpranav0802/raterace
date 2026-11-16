@@ -11,6 +11,9 @@ use crate::storage;
 use crate::types::{Order, Quote, Status};
 
 const BPS: i128 = 10_000;
+/// A quote may be valid for at most this long. Used request ids are remembered for two days
+/// (temporary storage), so capping the lifetime guarantees a quote can never be replayed.
+pub const MAX_QUOTE_LIFETIME_S: u64 = 3_600;
 
 pub fn open_order(
     env: &Env,
@@ -24,6 +27,11 @@ pub fn open_order(
     sender.require_auth();
 
     let cfg = storage::config(env)?;
+
+    // Emergency stop: no new money comes in while paused.
+    if registry::paused(env) {
+        return Err(Error::Paused);
+    }
 
     // 2. Sane amounts.
     if quote.send_usdc <= 0 || quote.landed_local <= 0 {
@@ -43,6 +51,9 @@ pub fn open_order(
     let now = env.ledger().timestamp();
     if quote.expires_at <= now {
         return Err(Error::QuoteExpired);
+    }
+    if quote.expires_at - now > MAX_QUOTE_LIFETIME_S {
+        return Err(Error::QuoteLifetimeTooLong);
     }
 
     // 5. Each quote can be used once (replay protection).

@@ -1,6 +1,7 @@
 //! Config, anchors, bonds, sender limits and the quote digest.
 //! Owner: Pranav (issue #5). See docs/BUILD_PLAN.md sections 4.7 and 6.
 use soroban_sdk::{token, xdr::ToXdr, Address, BytesN, Env, Symbol, Vec};
+use stellar_contract_utils::pausable;
 
 use crate::errors::Error;
 use crate::events;
@@ -8,6 +9,8 @@ use crate::storage;
 use crate::types::{Anchor, Config, Quote, SenderLimit};
 
 const BPS: u32 = 10_000;
+/// Registration is open to anyone, so the list is capped to keep its cost bounded.
+pub const MAX_ANCHORS: u32 = 200;
 
 fn validate_config(config: &Config) -> Result<(), Error> {
     let min_ratio = BPS.checked_add(config.penalty_bps).ok_or(Error::InvalidConfig)?;
@@ -43,6 +46,29 @@ pub fn update_config(env: &Env, config: Config) -> Result<(), Error> {
     Ok(())
 }
 
+// Emergency stop, built on OpenZeppelin's Pausable storage and events.
+// OpenZeppelin's functions do no authorisation themselves, so the admin check is ours.
+
+pub fn pause(env: &Env) -> Result<(), Error> {
+    storage::config(env)?.admin.require_auth();
+    if !pausable::paused(env) {
+        pausable::pause(env);
+    }
+    Ok(())
+}
+
+pub fn unpause(env: &Env) -> Result<(), Error> {
+    storage::config(env)?.admin.require_auth();
+    if pausable::paused(env) {
+        pausable::unpause(env);
+    }
+    Ok(())
+}
+
+pub fn paused(env: &Env) -> bool {
+    pausable::paused(env)
+}
+
 pub fn register_anchor(
     env: &Env,
     anchor: Address,
@@ -53,6 +79,9 @@ pub fn register_anchor(
     storage::config(env)?;
     if storage::anchor_exists(env, &anchor) {
         return Err(Error::AnchorExists);
+    }
+    if storage::anchor_ids(env).len() >= MAX_ANCHORS {
+        return Err(Error::TooManyAnchors);
     }
     let data = Anchor {
         signing_key,
