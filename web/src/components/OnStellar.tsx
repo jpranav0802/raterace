@@ -44,10 +44,10 @@ function Entry({ e }: { e: LogEntry }) {
   const reduce = useReducedMotion();
   return (
     <motion.li
-      initial={reduce ? false : { opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.25 }}
-      className="relative flex gap-3 pb-4 last:pb-0"
+      initial={reduce ? false : { opacity: 0, x: 16, scale: 0.9 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 460, damping: 18 }}
+      className="relative flex origin-left gap-3 pb-4 last:pb-0"
     >
       <Marker status={e.status} />
       <div className="min-w-0 flex-1">

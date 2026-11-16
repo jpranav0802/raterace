@@ -1,7 +1,9 @@
 import { formatUsd } from "@raterace/shared";
 import { Radio } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { LogoMark, Wordmark } from "@/components/Logo";
 import { OnStellarPanel, OnStellarSheet } from "@/components/OnStellar";
 import { networkView } from "@/lib/local";
 import { cn } from "@/lib/utils";
@@ -18,7 +20,7 @@ import Send from "./pages/Send";
 const navLink = ({ isActive }: { isActive: boolean }) =>
   cn(
     "rounded-full px-3 py-1.5 text-sm transition-colors",
-    isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+    isActive ? "bg-brand/15 text-brand" : "text-muted-foreground hover:text-foreground",
   );
 
 /** Sender screens can show the live "On Stellar" view next to the app. */
@@ -26,14 +28,9 @@ const LIVE_ROUTES = /^\/(send|quotes|order|activity)(\/|$)/;
 
 function Logo() {
   return (
-    <NavLink to="/send" className="flex items-center gap-2" aria-label="RateRace home">
-      <span className="flex size-7 items-center justify-center rounded-lg bg-foreground text-background">
-        <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
-          <path d="M4 16h9M4 11h13M4 6h16" strokeLinecap="round" />
-          <path d="M17 13l3 3-3 3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
-      <span className="text-[1.05rem] font-semibold tracking-tight">RateRace</span>
+    <NavLink to="/send" className="flex items-center gap-2.5" aria-label="RateRace home">
+      <LogoMark />
+      <Wordmark className="text-[1.15rem]" />
     </NavLink>
   );
 }
@@ -62,7 +59,9 @@ function Balance({ pathname }: { pathname: string }) {
 }
 
 function SenderApp() {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
+  const reduce = useReducedMotion();
   const showNetwork = networkView.use();
   const live = LIVE_ROUTES.test(pathname) && showNetwork;
   // Each screen starts at the top (the router keeps the old scroll position otherwise).
@@ -94,7 +93,7 @@ function SenderApp() {
             title={showNetwork ? "Hide the on-chain record" : "Show the on-chain record"}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
-              showNetwork ? "border-good/40 text-good" : "text-muted-foreground hover:text-foreground",
+              showNetwork ? "border-brand/50 text-brand" : "text-muted-foreground hover:text-foreground",
             )}
           >
             <Radio className="size-3.5" />
@@ -112,7 +111,14 @@ function SenderApp() {
         )}
       >
         <main className="min-w-0">
-          <Routes>
+          <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={pathname}
+            initial={reduce ? false : { opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 420, damping: 24 } }}
+            exit={reduce ? undefined : { opacity: 0, y: -10, scale: 0.98, transition: { duration: 0.12 } }}
+          >
+          <Routes location={location}>
             <Route path="/" element={<Navigate to="/send" replace />} />
             <Route path="/send" element={<Send />} />
             <Route path="/quotes" element={<Quotes />} />
@@ -123,6 +129,8 @@ function SenderApp() {
             <Route path="/design" element={<Design />} />
             <Route path="*" element={<Navigate to="/send" replace />} />
           </Routes>
+          </motion.div>
+          </AnimatePresence>
         </main>
         {live && <OnStellarPanel />}
       </div>

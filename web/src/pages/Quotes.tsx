@@ -2,6 +2,7 @@
 import { contract, rpc } from "@stellar/stellar-sdk";
 import { formatBps, formatMxn, formatUsd, hexToBytes, marketLocal, toUnits, type RankedQuote } from "@raterace/shared";
 import { RateRaceClient, toContractQuote } from "@raterace/shared/chain";
+import { motion } from "motion/react";
 import { useCallback, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
@@ -276,11 +277,18 @@ export default function Quotes() {
               onClick={() => setLimitBps(bps)}
               className={
                 limitBps === bps
-                  ? "money rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
-                  : "money rounded-full border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  ? "money relative rounded-full px-3 py-1 text-xs font-semibold text-brand-foreground"
+                  : "money relative rounded-full border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
               }
             >
-              {bps / 100}%
+              {limitBps === bps && (
+                <motion.span
+                  layoutId="limit-pill"
+                  className="absolute inset-0 rounded-full bg-brand"
+                  transition={{ type: "spring", stiffness: 500, damping: 22 }}
+                />
+              )}
+              <span className="relative">{bps / 100}%</span>
             </button>
           ))}
         </div>
@@ -353,11 +361,11 @@ export default function Quotes() {
 
       <div className="mt-6">
         {expired ? (
-          <Button size="lg" className="w-full" onClick={refresh} disabled={!!busy}>
+          <Button size="lg" variant="brand" className="w-full" onClick={refresh} disabled={!!busy}>
             {busy ?? "Get new offers"}
           </Button>
         ) : (
-          <Button size="lg" className="w-full" onClick={lock} disabled={!!busy || !pickedAllowed} aria-busy={!!busy}>
+          <Button size="lg" variant="brand" className="w-full" onClick={lock} disabled={!!busy || !pickedAllowed} aria-busy={!!busy}>
             {busy ?? (liveMode ? `Lock ${picked.displayName}'s price` : `Send with ${picked.displayName}`)}
           </Button>
         )}

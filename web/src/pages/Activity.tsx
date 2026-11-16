@@ -3,6 +3,7 @@
 import { explorerTx, formatMxn, formatUsd } from "@raterace/shared";
 import { RateRaceClient } from "@raterace/shared/chain";
 import { ArrowUpRight, Send as SendIcon } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Flag } from "@/components/Flag";
@@ -111,10 +112,16 @@ export default function Activity() {
         </div>
       ) : (
         <ul className="mt-7 divide-y overflow-hidden rounded-2xl border bg-card">
-          {list.map((t) => {
+          {list.map((t, i) => {
             const s = statuses[t.orderId];
             return (
-              <li key={t.orderId} className="flex items-center gap-3 px-4 py-3.5">
+              <motion.li
+                key={t.orderId}
+                initial={{ opacity: 0, y: 14, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ type: "spring", stiffness: 460, damping: 16, delay: Math.min(i, 8) * 0.05 }}
+                className="flex items-center gap-3 px-4 py-3.5"
+              >
                 <span className="relative">
                   <span className="flex size-10 items-center justify-center rounded-full bg-secondary text-sm font-semibold">
                     {initials(t.recipientName)}
@@ -153,7 +160,7 @@ export default function Activity() {
                   <p className="money font-semibold">{formatMxn(t.landedLocal)}</p>
                   <p className="money text-xs text-muted-foreground">{formatUsd(t.sendUsdc)} sent</p>
                 </div>
-              </li>
+              </motion.li>
             );
           })}
         </ul>
