@@ -372,3 +372,54 @@ fn a_failed_order_changes_nothing() {
     s.client
         .open_order(&s.sender, &ok_quote, &ok_sig, &s.recipient_hash(), &CAP);
 }
+
+// ---------- hardening ----------
+
+#[test]
+fn rejects_a_quote_that_stays_valid_too_long() {
+    let mut s = Setup::new();
+    let mut quote = s.quote(0, usdc(200), mxn(3_940));
+    quote.expires_at = s.now() + 3_601; // more than an hour
+    let sig = s.sign(&quote, &s.anchors[0].signing);
+    assert_eq!(
+        s.client
+            .try_open_order(&s.sender, &quote, &sig, &s.recipient_hash(), &CAP),
+        Err(Ok(Error::QuoteLifetimeTooLong))
+    );
+}
+
+#[test]
+fn pause_blocks_new_orders_but_money_can_still_leave() {
+    let mut s = Setup::new();
+    let (q1, s1) = s.signed_quote(0, usdc(200), mxn(3_940));
+    let (q2, s2) = s.signed_quote(2, usdc(200), mxn(3_966));
+    let paid = s.client.open_order(&s.sender, &q1, &s1, &s.recipient_hash(), &CAP);
+    let stuck = s.client.open_order(&s.sender, &q2, &s2, &s.recipient_hash(), &CAP);
+
+    s.client.pause();
+
+    // no new orders
+    let (q3, s3) = s.signed_quote(1, usdc(200), mxn(3_940));
+    assert_eq!(
+        s.client
+            .try_open_order(&s.sender, &q3, &s3, &s.recipient_hash(), &CAP),
+        Err(Ok(Error::Paused))
+    );
+
+    // but the anchor can still be paid, the sender can still confirm...
+    s.client
+        .mark_paid(&q1.anchor, &paid, &BytesN::from_array(&s.env, &[7u8; 32]));
+    s.client.confirm(&paid);
+    assert_eq!(s.client.get_order(&paid).status, Status::Settled);
+
+    // ...and a missed deadline still refunds
+    s.advance(121);
+    s.client.refund_expired(&stuck);
+    assert_eq!(s.client.get_order(&stuck).status, Status::Refunded);
+
+    s.client.unpause();
+    s.set_price(MXN_PRICE);
+    let (q4, s4) = s.signed_quote(1, usdc(200), mxn(3_940));
+    s.client
+        .open_order(&s.sender, &q4, &s4, &s.recipient_hash(), &CAP);
+}

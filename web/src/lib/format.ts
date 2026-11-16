@@ -2,6 +2,7 @@
 export { formatBps, formatMxn, formatUsd, fromUnits, toUnits } from "@raterace/shared";
 
 const MESSAGES: Record<number, string> = {
+  6: "New transfers are paused for a moment. Please try again shortly.",
   12: "This provider is paused.",
   14: "This provider can't cover this amount right now.",
   20: "This offer expired. Get new offers.",

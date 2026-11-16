@@ -7,50 +7,36 @@ use super::helpers::*;
 use crate::errors::Error;
 
 #[test]
-fn init_stores_config() {
-    let s = Setup::bare();
-    let cfg = s.default_config();
-    s.client.init(&cfg);
-    assert_eq!(s.client.get_config(), cfg);
-}
-
-#[test]
-fn init_twice_fails() {
+fn constructor_stores_config() {
     let s = Setup::new();
-    assert_eq!(
-        s.client.try_init(&s.default_config()),
-        Err(Ok(Error::AlreadyInitialized))
-    );
+    assert_eq!(s.client.get_config(), s.default_config());
 }
 
 #[test]
-fn calls_before_init_fail() {
-    let s = Setup::bare();
-    assert_eq!(s.client.try_get_config(), Err(Ok(Error::NotInitialized)));
-    let a = s.new_anchor(1);
-    assert_eq!(
-        s.client
-            .try_register_anchor(&a.address, &s.signing_key_bytes(&a), &vec![&s.env, corridor()]),
-        Err(Ok(Error::NotInitialized))
-    );
+fn constructor_takes_the_config_it_is_given() {
+    let s = Setup::with_config(|c| c.payout_window_s = 900);
+    assert_eq!(s.client.get_config().payout_window_s, 900);
+}
+
+// The contract has no `init` function: it is configured by its constructor, in the same
+// transaction that deploys it, so nobody can initialise (or re-initialise) it afterwards.
+
+#[test]
+#[should_panic]
+fn constructor_rejects_a_bond_that_cannot_cover_the_penalty() {
+    Setup::with_config(|c| c.bond_ratio_bps = 10_400);
 }
 
 #[test]
-fn invalid_config_rejected() {
-    let s = Setup::bare();
+#[should_panic]
+fn constructor_rejects_a_zero_payout_window() {
+    Setup::with_config(|c| c.payout_window_s = 0);
+}
 
-    // bond must cover the transfer plus the penalty
-    let mut cfg = s.default_config();
-    cfg.bond_ratio_bps = 10_400;
-    assert_eq!(s.client.try_init(&cfg), Err(Ok(Error::InvalidConfig)));
-
-    let mut cfg = s.default_config();
-    cfg.payout_window_s = 0;
-    assert_eq!(s.client.try_init(&cfg), Err(Ok(Error::InvalidConfig)));
-
-    let mut cfg = s.default_config();
-    cfg.max_slashes = 0;
-    assert_eq!(s.client.try_init(&cfg), Err(Ok(Error::InvalidConfig)));
+#[test]
+#[should_panic]
+fn constructor_rejects_zero_max_slashes() {
+    Setup::with_config(|c| c.max_slashes = 0);
 }
 
 #[test]
@@ -240,4 +226,44 @@ fn print_event_shape() {
         .register_anchor(&a.address, &s.signing_key_bytes(&a), &vec![&s.env, corridor()]);
     let events = s.env.events().all();
     std::println!("{:#?}", events);
+}
+
+// ---------- emergency stop ----------
+
+#[test]
+fn admin_can_pause_and_unpause() {
+    let s = Setup::new();
+    assert!(!s.client.paused());
+    s.client.pause();
+    assert!(s.client.paused());
+    s.client.pause(); // pausing twice is harmless
+    s.client.unpause();
+    assert!(!s.client.paused());
+}
+
+#[test]
+fn only_the_admin_can_pause() {
+    let s = Setup::new();
+    s.env.set_auths(&[]);
+    assert!(s.client.try_pause().is_err());
+    assert!(!s.client.paused());
+}
+
+// ---------- registration cap ----------
+
+#[test]
+fn anchor_list_is_capped() {
+    let s = Setup::new();
+    // 3 anchors exist; fill the list up to the cap
+    for i in 3..crate::registry::MAX_ANCHORS {
+        let a = s.new_anchor((i % 250) as u8);
+        s.client
+            .register_anchor(&a.address, &s.signing_key_bytes(&a), &vec![&s.env, corridor()]);
+    }
+    let extra = s.new_anchor(9);
+    assert_eq!(
+        s.client
+            .try_register_anchor(&extra.address, &s.signing_key_bytes(&extra), &vec![&s.env, corridor()]),
+        Err(Ok(Error::TooManyAnchors))
+    );
 }
