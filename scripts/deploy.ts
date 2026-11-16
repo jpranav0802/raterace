@@ -35,9 +35,11 @@ const SKIP_BUILD = process.argv.includes("--skip-build");
 const UNIT = 10_000_000n; // 7 decimals
 const usdc = (n: number) => (BigInt(n) * UNIT).toString();
 
-// USD per 1 MXN, 14 decimals. ILLUSTRATIVE default (0.05 = 20 MXN per USD).
-// Replace with a real sourced rate before the demo: MOCK_MXN_USD_PRICE=... npm run deploy
-const MXN_PRICE = process.env.MOCK_MXN_USD_PRICE || "5000000000000";
+// USD per 1 MXN, 14 decimals. Default: the Reflector MAINNET fiat feed's MXN `lastprice` on
+// 14 Nov 2026 (0.0538 USD per MXN, about 18.58 MXN per USD), recorded in
+// contracts/mock_oracle/REFLECTOR_CHECK.md. Testnet has no live MXN feed, so we set it by hand.
+// Override: MOCK_MXN_USD_PRICE=... npm run deploy   (or change it later on the /admin page)
+const MXN_PRICE = process.env.MOCK_MXN_USD_PRICE || "5382749268572";
 
 const CONFIG = {
   max_oracle_age_s: 600,
