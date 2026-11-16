@@ -17,7 +17,7 @@ import Send from "./pages/Send";
 const navLink = ({ isActive }: { isActive: boolean }) =>
   cn(
     "rounded-full px-3 py-1.5 text-sm transition-colors",
-    isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+    isActive ? "bg-brand/15 text-brand" : "text-muted-foreground hover:text-foreground",
   );
 
 /** Sender screens can show the live "On Stellar" view next to the app. */
@@ -26,7 +26,7 @@ const LIVE_ROUTES = /^\/(send|quotes|order|activity)(\/|$)/;
 function Logo() {
   return (
     <NavLink to="/send" className="flex items-center gap-2" aria-label="RateRace home">
-      <span className="flex size-7 items-center justify-center rounded-lg bg-foreground text-background">
+      <span className="flex size-7 items-center justify-center rounded-lg bg-brand text-brand-foreground">
         <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
           <path d="M4 16h9M4 11h13M4 6h16" strokeLinecap="round" />
           <path d="M17 13l3 3-3 3" strokeLinecap="round" strokeLinejoin="round" />
@@ -93,7 +93,7 @@ export default function App() {
             title={showNetwork ? "Hide the on-chain record" : "Show the on-chain record"}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
-              showNetwork ? "border-good/40 text-good" : "text-muted-foreground hover:text-foreground",
+              showNetwork ? "border-brand/50 text-brand" : "text-muted-foreground hover:text-foreground",
             )}
           >
             <Radio className="size-3.5" />

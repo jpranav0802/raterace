@@ -153,10 +153,10 @@ function LaneRow({
           aria-hidden="true"
           className={cn(
             "flex size-5 shrink-0 items-center justify-center rounded-full border",
-            !valid ? "border-transparent" : selected ? "border-foreground" : "border-input",
+            !valid ? "border-transparent" : selected ? "border-brand" : "border-input",
           )}
         >
-          {selected && <span className="size-2.5 rounded-full bg-foreground" />}
+          {selected && <span className="size-2.5 rounded-full bg-brand" />}
         </span>
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <span className={cn("font-medium", !valid && "text-muted-foreground")}>{lane.name}</span>

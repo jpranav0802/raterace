@@ -30,6 +30,9 @@
   --ring: #fafafa;
   --good: #4ade80;
   --bad: #ff6b6b;
+  /* Brand accent: orange, for the main action, selection and focus. Green and red keep their meaning. */
+  --brand: #ff7a1a;
+  --brand-foreground: #1c0b00;
   --radius: 1rem;
   color-scheme: dark;
 }
@@ -55,6 +58,8 @@
   --ring: #0a0a0a;
   --good: #15803d;
   --bad: #c62828;
+  --brand: #e8590c;
+  --brand-foreground: #ffffff;
   color-scheme: light;
 }
 
@@ -79,6 +84,8 @@
   --color-ring: var(--ring);
   --color-good: var(--good);
   --color-bad: var(--bad);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
 
   --font-sans: "Geist Variable", system-ui, sans-serif;
 
@@ -113,7 +120,7 @@
     text-wrap: balance;
   }
   :focus-visible {
-    outline: 2px solid var(--ring);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 }

@@ -276,7 +276,7 @@ export default function Quotes() {
               onClick={() => setLimitBps(bps)}
               className={
                 limitBps === bps
-                  ? "money rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
+                  ? "money rounded-full bg-brand px-3 py-1 text-xs font-semibold text-brand-foreground"
                   : "money rounded-full border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
               }
             >
@@ -353,11 +353,11 @@ export default function Quotes() {
 
       <div className="mt-6">
         {expired ? (
-          <Button size="lg" className="w-full" onClick={refresh} disabled={!!busy}>
+          <Button size="lg" variant="brand" className="w-full" onClick={refresh} disabled={!!busy}>
             {busy ?? "Get new offers"}
           </Button>
         ) : (
-          <Button size="lg" className="w-full" onClick={lock} disabled={!!busy || !pickedAllowed} aria-busy={!!busy}>
+          <Button size="lg" variant="brand" className="w-full" onClick={lock} disabled={!!busy || !pickedAllowed} aria-busy={!!busy}>
             {busy ?? (liveMode ? `Lock ${picked.displayName}'s price` : `Send with ${picked.displayName}`)}
           </Button>
         )}

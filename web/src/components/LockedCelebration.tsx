@@ -145,7 +145,7 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           animate={{ opacity: 1 }}
           transition={{ delay: 1.3 }}
         >
-          <Button asChild size="lg" className="w-full">
+          <Button asChild size="lg" variant="brand" className="w-full">
             <Link to={`/order/${info.orderId}`} state={{ hash: info.hash }}>
               Track the transfer
             </Link>

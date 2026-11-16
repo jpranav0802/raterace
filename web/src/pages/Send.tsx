@@ -96,7 +96,7 @@ function CurrencyPicker({ value, onChange }: { value: Corridor; onChange: (c: Co
                   <span className="block text-xs text-muted-foreground">{c.currency}</span>
                 </span>
                 {c.country === value.country ? (
-                  <Check className="size-4 text-good" />
+                  <Check className="size-4 text-brand" />
                 ) : !c.live ? (
                   <span className="rounded-full border px-2 py-0.5 text-[0.65rem] text-muted-foreground">Soon</span>
                 ) : null}
@@ -291,7 +291,7 @@ export default function Send() {
             onClick={() => setPickedId(r.id)}
             className={cn(
               "flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
-              pickedId === r.id ? "border-foreground/60 bg-secondary" : "hover:bg-secondary/50",
+              pickedId === r.id ? "border-brand/70 bg-brand/10" : "hover:bg-secondary/50",
             )}
           >
             <span className="flex size-9 items-center justify-center rounded-full bg-secondary text-sm font-semibold">
@@ -318,7 +318,7 @@ export default function Send() {
           onClick={() => setPickedId("new")}
           className={cn(
             "flex items-center gap-3 rounded-xl border border-dashed px-4 py-3 text-left transition-colors",
-            pickedId === "new" ? "border-foreground/60 bg-secondary" : "hover:bg-secondary/50",
+            pickedId === "new" ? "border-brand/70 bg-brand/10" : "hover:bg-secondary/50",
           )}
         >
           <span className="flex size-9 items-center justify-center rounded-full bg-secondary">
@@ -387,7 +387,7 @@ export default function Send() {
         </p>
       )}
 
-      <Button size="lg" type="submit" disabled={!!busy} aria-busy={!!busy} className="mt-7 w-full">
+      <Button size="lg" variant="brand" type="submit" disabled={!!busy} aria-busy={!!busy} className="mt-7 w-full">
         {busy ?? "Compare live offers"}
       </Button>
 
