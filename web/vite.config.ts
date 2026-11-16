@@ -10,5 +10,6 @@ export default defineConfig({
   },
   // Read VITE_* variables from the repo root .env (written by "npm run deploy").
   envDir: "..",
-  server: { port: 5173, strictPort: true },
+  // host: true also serves the app to phones on the same Wi-Fi (http://<this computer's IP>:5173).
+  server: { port: 5173, strictPort: true, host: true },
 });

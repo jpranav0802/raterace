@@ -1,0 +1,250 @@
+// The recipient's page, opened from the link the sender shares. No account, no wallet.
+// Shown in Spanish or English (the recipient is in Mexico; the phone's language decides).
+import { formatMxn, type FamilyView } from "@raterace/shared";
+import { useCallback, useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { fetchFamilyView, sendFamilyAnswer } from "@/lib/family";
+
+const POLL_MS = 3000;
+const PROVIDER_NAMES: Record<string, string> = { alpha: "Alpha", beta: "Beta", gamma: "Gamma" };
+
+type Lang = "es" | "en";
+
+const TEXT = {
+  en: {
+    switchTo: "Español",
+    loading: "Opening your link…",
+    invalid: "This link is not valid",
+    invalidBody: "Ask the person who sent it to share it again.",
+    offline: "We lost the connection. This page keeps trying.",
+    onItsWay: "Money is on its way to you",
+    youReceive: "You receive",
+    paying: (p: string) => `${p} is sending it to your bank account. This usually takes under a minute.`,
+    late: "This is taking longer than promised",
+    lateBody: (p: string) =>
+      `${p} missed its deadline. The sender gets all the money back, plus a penalty, and can send again.`,
+    arrivedQ: "Did the money arrive?",
+    paidBody: (p: string, a: string) => `${p} says it paid ${a} into your bank account.`,
+    bankLabel: "Demo bank alert",
+    bankNote: "In real use this is the alert from your own bank.",
+    bankLine: (a: string) => `Deposit received: ${a} by SPEI`,
+    yes: "Yes, it arrived",
+    no: "No, it hasn't arrived",
+    sending: "Sending…",
+    thanks: "Thank you",
+    thanksBody: "We told the sender it arrived.",
+    done: "All done",
+    doneBody: (a: string) => `You received ${a}.`,
+    reported: "We told the sender",
+    reportedBody: (p: string) => `${p}'s deposit is locked while this is checked. You don't need to do anything else.`,
+    cancelled: "This transfer was cancelled",
+    cancelledBody: "The sender got all the money back and can send again.",
+    tryAgain: "That didn't go through. Please try again.",
+    footer: "Demo on the Stellar test network. No real money moves.",
+  },
+  es: {
+    switchTo: "English",
+    loading: "Abriendo tu enlace…",
+    invalid: "Este enlace no es válido",
+    invalidBody: "Pide a quien te lo envió que lo comparta de nuevo.",
+    offline: "Se perdió la conexión. Esta página sigue intentando.",
+    onItsWay: "Tu dinero viene en camino",
+    youReceive: "Recibes",
+    paying: (p: string) => `${p} lo está enviando a tu cuenta bancaria. Normalmente tarda menos de un minuto.`,
+    late: "Está tardando más de lo prometido",
+    lateBody: (p: string) =>
+      `${p} no cumplió el plazo. Quien envía recupera todo el dinero, más una penalización, y puede enviarlo de nuevo.`,
+    arrivedQ: "¿Llegó el dinero?",
+    paidBody: (p: string, a: string) => `${p} dice que depositó ${a} en tu cuenta bancaria.`,
+    bankLabel: "Aviso de banco de demostración",
+    bankNote: "En el uso real, este es el aviso de tu propio banco.",
+    bankLine: (a: string) => `Depósito recibido: ${a} por SPEI`,
+    yes: "Sí, ya llegó",
+    no: "No, no ha llegado",
+    sending: "Enviando…",
+    thanks: "Gracias",
+    thanksBody: "Avisamos a quien envió que ya llegó.",
+    done: "Listo",
+    doneBody: (a: string) => `Recibiste ${a}.`,
+    reported: "Ya avisamos a quien envió",
+    reportedBody: (p: string) =>
+      `El depósito de ${p} queda bloqueado mientras se revisa. No necesitas hacer nada más.`,
+    cancelled: "Este envío se canceló",
+    cancelledBody: "Quien envía recuperó todo el dinero y puede enviarlo de nuevo.",
+    tryAgain: "No se pudo enviar. Inténtalo de nuevo.",
+    footer: "Demostración en la red de pruebas de Stellar. No se mueve dinero real.",
+  },
+} as const;
+
+export default function Family() {
+  const { id } = useParams();
+  const orderId = Number(id);
+  const [token] = useState(() => window.location.hash.replace(/^#/, ""));
+  const [lang, setLang] = useState<Lang>(() => (navigator.language?.toLowerCase().startsWith("es") ? "es" : "en"));
+  const [view, setView] = useState<FamilyView | null>(null);
+  const [state, setState] = useState<"loading" | "invalid" | "offline" | "ok">("loading");
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const t = TEXT[lang];
+
+  const load = useCallback(async () => {
+    if (!Number.isInteger(orderId) || !/^[0-9a-f]{32}$/.test(token)) {
+      setState("invalid");
+      return;
+    }
+    try {
+      const v = await fetchFamilyView(orderId, token);
+      if (v === "invalid") {
+        setState("invalid");
+        return;
+      }
+      setView(v);
+      setState("ok");
+    } catch {
+      setState((s) => (s === "loading" ? "loading" : "offline"));
+    }
+  }, [orderId, token]);
+
+  useEffect(() => {
+    void load();
+    const poll = setInterval(load, POLL_MS);
+    const clock = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(clock);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+
+  async function answer(arrived: boolean) {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await sendFamilyAnswer(orderId, token, arrived);
+      await load();
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const langButton = (
+    <button
+      type="button"
+      onClick={() => setLang(lang === "es" ? "en" : "es")}
+      className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+    >
+      {t.switchTo}
+    </button>
+  );
+
+  let body;
+  if (state === "loading" && !view) {
+    body = <h1 className="text-[1.75rem]">{t.loading}</h1>;
+  } else if (state === "invalid" || !view) {
+    body = (
+      <>
+        <h1 className="text-[1.75rem]">{t.invalid}</h1>
+        <p className="mt-2 text-muted-foreground">{t.invalidBody}</p>
+      </>
+    );
+  } else {
+    const amount = formatMxn(view.landedLocal);
+    const provider = PROVIDER_NAMES[view.anchorName] ?? "The provider";
+    const late = view.status === "Open" && now > view.payoutDeadline;
+
+    const amountCard = (
+      <Card className="mt-6">
+        <p className="text-sm text-muted-foreground">{t.youReceive}</p>
+        <p className="money mt-1 text-[2.5rem] leading-none font-medium tracking-tight">{amount}</p>
+      </Card>
+    );
+
+    if (view.status === "Open") {
+      body = (
+        <>
+          <h1 className="text-[1.75rem]">{late ? t.late : t.onItsWay}</h1>
+          <p className="mt-2 text-muted-foreground">{late ? t.lateBody(provider) : t.paying(provider)}</p>
+          {amountCard}
+        </>
+      );
+    } else if (view.status === "Paid" && !view.answer) {
+      body = (
+        <>
+          <h1 className="text-[1.75rem]">{t.arrivedQ}</h1>
+          <p className="mt-2 text-muted-foreground">{t.paidBody(provider, amount)}</p>
+          <Card className="mt-6 border-good/40">
+            <p className="text-xs text-muted-foreground">{t.bankLabel}</p>
+            <p className="money mt-1 text-lg font-medium text-good">{t.bankLine(amount)}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{t.bankNote}</p>
+          </Card>
+          <div className="mt-5 flex flex-col gap-2">
+            <Button size="lg" disabled={busy} onClick={() => answer(true)}>
+              {busy ? t.sending : t.yes}
+            </Button>
+            <Button size="lg" variant="destructive" disabled={busy} onClick={() => answer(false)}>
+              {t.no}
+            </Button>
+          </div>
+          {failed && (
+            <p role="alert" className="mt-3 text-sm text-bad">
+              {t.tryAgain}
+            </p>
+          )}
+        </>
+      );
+    } else if (view.status === "Refunded" || view.status === "Slashed") {
+      body = (
+        <>
+          <h1 className="text-[1.75rem]">{t.cancelled}</h1>
+          <p className="mt-2 text-muted-foreground">{t.cancelledBody}</p>
+        </>
+      );
+    } else if (view.status === "Disputed" || view.answer?.arrived === false) {
+      body = (
+        <>
+          <h1 className="text-[1.75rem]">{t.reported}</h1>
+          <p className="mt-2 text-muted-foreground">{t.reportedBody(provider)}</p>
+        </>
+      );
+    } else if (view.status === "Settled") {
+      body = (
+        <>
+          <h1 className="text-[1.75rem]">{t.done}</h1>
+          <p className="mt-2 text-muted-foreground">{t.doneBody(amount)}</p>
+          {amountCard}
+        </>
+      );
+    } else {
+      // Paid and the recipient said yes; the sender's app is confirming.
+      body = (
+        <>
+          <h1 className="text-[1.75rem]">{t.thanks}</h1>
+          <p className="mt-2 text-muted-foreground">{t.thanksBody}</p>
+          {amountCard}
+        </>
+      );
+    }
+  }
+
+  return (
+    <div className="flex min-h-dvh flex-col">
+      <header className="mx-auto flex w-full max-w-[30rem] items-center justify-between px-5 py-4">
+        <span className="text-lg font-semibold tracking-tight">RateRace</span>
+        {langButton}
+      </header>
+      <main className="mx-auto w-full max-w-[30rem] flex-1 px-5 pt-6 pb-16">
+        {body}
+        {state === "offline" && <p className="mt-4 text-sm text-muted-foreground">{t.offline}</p>}
+      </main>
+      <footer className="px-5 pb-6 text-center text-xs text-muted-foreground">{t.footer}</footer>
+    </div>
+  );
+}

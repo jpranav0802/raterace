@@ -8,3 +8,4 @@ dist/
 .stellar/
 test_snapshots/
 *.cursor-*.json
+.family.json
