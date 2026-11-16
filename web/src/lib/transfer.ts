@@ -1,5 +1,7 @@
 // What the Send page hands to the Quotes page. Owner: Abhiraj (#17, #18).
 // Kept in navigation state and mirrored to sessionStorage so a reload of /quotes still works.
+import { hash } from "@stellar/stellar-sdk";
+import { bytesToHex } from "@raterace/shared";
 import type { RfqRequestWithMode, RfqWithAudit } from "./api";
 
 export interface PendingTransfer {
@@ -43,7 +45,7 @@ export function clearPending() {
 }
 
 export async function recipientHash(name: string, clabe: string): Promise<string> {
-  const data = new TextEncoder().encode(JSON.stringify({ name, clabe }));
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  // Uses the Stellar SDK's sha256 rather than crypto.subtle, which browsers only provide on
+  // https or localhost: the app must also work when opened from a phone over plain http.
+  return bytesToHex(hash(Buffer.from(JSON.stringify({ name, clabe }), "utf8")));
 }

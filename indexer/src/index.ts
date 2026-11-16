@@ -6,13 +6,24 @@
 //
 // Note for production: public RPC nodes only keep recent events (about a week), so a real
 // deployment would use a full indexer with its own database.
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import cors from "cors";
 import express from "express";
-import { rpc } from "@stellar/stellar-sdk";
-import { PORTS, bytesToHex, type LeaderboardRow, type OrderView } from "@raterace/shared";
+import { Keypair, rpc } from "@stellar/stellar-sdk";
+import {
+  PORTS,
+  bytesToHex,
+  hexToBytes,
+  type FamilyAnswer,
+  type FamilyView,
+  type LeaderboardRow,
+  type OrderView,
+} from "@raterace/shared";
 import { makeClients } from "@raterace/shared/chain";
 import { fetchEvents, type ContractEvent, type EventCursor } from "@raterace/shared/events";
-import { loadConfig, loadDeployment } from "@raterace/shared/node";
+import { REPO_ROOT, loadConfig, loadDeployment } from "@raterace/shared/node";
 
 const POLL_MS = 3000;
 
@@ -23,6 +34,43 @@ const ready = Boolean(cfg.rateraceContractId && cfg.oracleContractId && deployme
 const orders = new Map<number, OrderView>();
 let leaderboard: LeaderboardRow[] = [];
 let lastLedger = 0;
+
+// ---------- family links ----------
+// After locking an offer, the sender creates a private link for the recipient. The recipient
+// needs no account: the link shows the transfer's progress and lets them say whether the money
+// arrived. Their answer is relayed to the sender's app, which signs the on-chain confirm or
+// dispute. This is off-chain convenience data, kept in a small local file.
+
+interface FamilyLink {
+  contractId: string;
+  /** sha256 of the secret in the link. The secret itself is never stored. */
+  tokenHash: string;
+  answer: FamilyAnswer | null;
+}
+
+const FAMILY_FILE = resolve(REPO_ROOT, "indexer/.family.json");
+const family = new Map<number, FamilyLink>();
+try {
+  if (existsSync(FAMILY_FILE)) {
+    for (const [id, link] of Object.entries(JSON.parse(readFileSync(FAMILY_FILE, "utf8")) as Record<string, FamilyLink>)) {
+      // Links belong to one deployment: order ids restart at 1 on every redeploy.
+      if (link.contractId === cfg.rateraceContractId) family.set(Number(id), link);
+    }
+  }
+} catch {
+  // unreadable file: start empty
+}
+function saveFamily() {
+  try {
+    writeFileSync(FAMILY_FILE, JSON.stringify(Object.fromEntries(family)));
+  } catch {
+    // read-only disk (some hosts): links then live in memory only
+  }
+}
+const sha256Hex = (text: string) => createHash("sha256").update(text).digest("hex");
+/** The message the sender signs to prove the family link is theirs. */
+export const familyLinkMessage = (orderId: number, tokenHash: string) =>
+  Buffer.from(`raterace-family-link:${orderId}:${tokenHash}`);
 
 const anchorName = (address: string) =>
   deployment?.anchors.find((a) => a.address === address)?.name ?? "";
@@ -90,10 +138,16 @@ function apply(ev: ContractEvent) {
 async function main() {
   const app = express();
   app.use(cors());
+  app.use(express.json({ limit: "10kb" }));
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true, service: "indexer", ready, orders: orders.size, lastLedger });
   });
+
+  const withAnswer = (o: OrderView): OrderView => {
+    const answer = family.get(o.id)?.answer;
+    return answer ? { ...o, familyAnswer: answer } : o;
+  };
 
   app.get("/orders/:id", (req, res) => {
     const order = orders.get(Number(req.params.id));
@@ -101,7 +155,100 @@ async function main() {
       res.status(404).json({ error: "Order not found" });
       return;
     }
-    res.json(order);
+    res.json(withAnswer(order));
+  });
+
+  // Sender creates the family link. Body: { token, signature }.
+  // `signature` is the sender's ed25519 signature over familyLinkMessage(id, sha256(token)),
+  // so only the account that opened the order can create its link.
+  app.post("/family/:id", (req, res) => {
+    const id = Number(req.params.id);
+    const order = orders.get(id);
+    const { token, signature } = (req.body ?? {}) as { token?: string; signature?: string };
+    if (!order) {
+      res.status(404).json({ error: "Order not found yet. Try again in a few seconds." });
+      return;
+    }
+    if (typeof token !== "string" || !/^[0-9a-f]{32}$/.test(token) || typeof signature !== "string") {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    const tokenHash = sha256Hex(token);
+    let valid = false;
+    try {
+      valid = Keypair.fromPublicKey(order.sender).verify(
+        familyLinkMessage(id, tokenHash),
+        Buffer.from(hexToBytes(signature)),
+      );
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      res.status(403).json({ error: "Only the sender can create this link." });
+      return;
+    }
+    const existing = family.get(id);
+    if (existing && existing.tokenHash !== tokenHash) {
+      res.status(409).json({ error: "A link already exists for this transfer." });
+      return;
+    }
+    if (!existing) {
+      family.set(id, { contractId: cfg.rateraceContractId, tokenHash, answer: null });
+      saveFamily();
+    }
+    res.json({ ok: true });
+  });
+
+  const familyLink = (id: number, token: unknown) => {
+    const link = family.get(id);
+    return link && typeof token === "string" && sha256Hex(token) === link.tokenHash ? link : null;
+  };
+
+  // Recipient's view. Needs the secret from the link.
+  app.get("/family/:id", (req, res) => {
+    const id = Number(req.params.id);
+    const link = familyLink(id, req.query.token);
+    const order = orders.get(id);
+    if (!link || !order) {
+      res.status(404).json({ error: "This link is not valid." });
+      return;
+    }
+    const view: FamilyView = {
+      id,
+      status: order.status,
+      landedLocal: order.landedLocal,
+      anchorName: order.anchorName,
+      payoutDeadline: order.payoutDeadline,
+      challengeEnds: order.challengeEnds,
+      paidAt: order.txs.find((t) => t.event === "paid")?.at ?? 0,
+      answer: link.answer,
+    };
+    res.json(view);
+  });
+
+  // Recipient answers "did it arrive?". Body: { token, arrived }.
+  app.post("/family/:id/answer", (req, res) => {
+    const id = Number(req.params.id);
+    const { token, arrived } = (req.body ?? {}) as { token?: string; arrived?: boolean };
+    const link = familyLink(id, token);
+    const order = orders.get(id);
+    if (!link || !order) {
+      res.status(404).json({ error: "This link is not valid." });
+      return;
+    }
+    if (typeof arrived !== "boolean") {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    if (order.status !== "Paid") {
+      res.status(409).json({ error: "This transfer is not waiting for an answer." });
+      return;
+    }
+    if (!link.answer) {
+      link.answer = { arrived, at: Math.floor(Date.now() / 1000) };
+      saveFamily();
+    }
+    res.json({ ok: true, answer: link.answer });
   });
 
   app.get("/orders", (req, res) => {
@@ -109,7 +256,7 @@ async function main() {
     const list = [...orders.values()]
       .filter((o) => !sender || o.sender === sender)
       .sort((a, b) => b.id - a.id);
-    res.json(list);
+    res.json(list.map(withAnswer));
   });
 
   app.get("/leaderboard", (_req, res) => {

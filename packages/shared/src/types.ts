@@ -64,7 +64,28 @@ export interface OrderView {
   /** Set once the sender has been paid back: total returned and the penalty part of it (USDC units). */
   refund?: string;
   penalty?: string;
+  /** What the recipient answered on the family link, if anything. */
+  familyAnswer?: FamilyAnswer;
   txs: { event: string; hash: string; ledger: number; at: number }[];
+}
+
+export interface FamilyAnswer {
+  arrived: boolean;
+  /** Unix seconds. */
+  at: number;
+}
+
+/** What the family link shows. Deliberately small: no sender address, no account details. */
+export interface FamilyView {
+  id: number;
+  status: OrderStatus;
+  landedLocal: string;
+  anchorName: string;
+  payoutDeadline: number;
+  challengeEnds: number;
+  /** Unix seconds when the provider reported the payout; 0 before that. */
+  paidAt: number;
+  answer: FamilyAnswer | null;
 }
 
 export interface LeaderboardRow {
