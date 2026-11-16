@@ -87,7 +87,7 @@ Simulated, and labelled as such in the app:
 - **The family's answer is relayed.** The contract only accepts a confirm or dispute from the sender, so the sender's app signs it when the family's answer arrives.
 - **One admin key** approves providers, resolves disputes and can pause. A real deployment needs multisig and an arbitration process.
 - **Security.** [`docs/SECURITY.md`](docs/SECURITY.md) is a self-review against Stellar's developer security guide, not a professional audit. The Scout static analyser could not be run (its lint driver failed to build), so we claim no static-analysis result. The deployed WASM has no SEP-55 build attestation yet.
-- **Prior art.** [`docs/ECOSYSTEM_RESEARCH.md`](docs/ECOSYSTEM_RESEARCH.md) lists the closest existing Stellar projects we found, including Silicore, which also ranks anchors by rate.
+- **Prior art.** [`docs/ECOSYSTEM_RESEARCH.md`](docs/ECOSYSTEM_RESEARCH.md) lists the closest existing Stellar projects we found. The nearest mechanism is a request-for-quote system for redeeming asset tokens (Octarine); none of the projects we found runs an auction between anchors on the landed amount.
 - **Privacy.** Amounts and addresses are public on-chain. Personal details are never written on-chain.
 
 ## Repository map
