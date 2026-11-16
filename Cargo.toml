@@ -8,7 +8,9 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-soroban-sdk = "29.0.1"
+# 28.x: the newest SDK line supported by the OpenZeppelin Stellar contracts we use.
+soroban-sdk = "28"
+stellar-contract-utils = "=0.8.0"
 
 [profile.release]
 opt-level = "z"

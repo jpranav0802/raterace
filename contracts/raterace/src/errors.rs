@@ -14,6 +14,8 @@ pub enum Error {
     InvalidConfig = 3,
     InvalidAmount = 4,
     Overflow = 5,
+    /// New orders are paused by the admin (emergency stop). Money already in can still leave.
+    Paused = 6,
 
     AnchorExists = 10,
     AnchorNotFound = 11,
@@ -21,6 +23,7 @@ pub enum Error {
     CorridorNotAllowed = 13,
     InsufficientBond = 14,
     NotOrderAnchor = 15,
+    TooManyAnchors = 16,
 
     QuoteExpired = 20,
     RequestIdUsed = 21,
@@ -28,6 +31,7 @@ pub enum Error {
     OracleStale = 23,
     MarkupTooHigh = 24,
     DailyCapExceeded = 25,
+    QuoteLifetimeTooLong = 26,
 
     OrderNotFound = 30,
     WrongStatus = 31,

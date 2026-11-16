@@ -31,6 +31,9 @@ export * as rpc from "@stellar/stellar-sdk/rpc";
 
 
 export const OracleError = {
+  /**
+   * Unused since the contract moved to a constructor. Kept so codes are never renumbered.
+   */
   1: {message:"AlreadyInitialized"},
   2: {message:"NotInitialized"},
   3: {message:"InvalidPrice"}
@@ -51,12 +54,6 @@ timestamp: u64;
 }
 
 export interface Client {
-  /**
-   * Construct and simulate a init transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Store the admin. Callable once. Auth: `admin`.
-   */
-  init: ({admin}: {admin: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
   /**
    * Construct and simulate a assets transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Assets that have a price.
@@ -96,6 +93,8 @@ export interface Client {
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
+        /** Constructor/Initialization Args for the contract's `__constructor` method */
+        {admin}: {admin: string},
     /** Options for initializing a Client as well as for calling a method, with extras specific to deploying. */
     options: MethodOptions &
       Omit<ContractClientOptions, "contractId"> & {
@@ -107,26 +106,25 @@ export class Client extends ContractClient {
         format?: "hex" | "base64";
       }
   ): Promise<AssembledTransaction<T>> {
-    return ContractClient.deploy(null, options)
+    return ContractClient.deploy({admin}, options)
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAAC09yYWNsZUVycm9yAAAAAAMAAAAAAAAAEkFscmVhZHlJbml0aWFsaXplZAAAAAAAAQAAAAAAAAAOTm90SW5pdGlhbGl6ZWQAAAAAAAIAAAAAAAAADEludmFsaWRQcmljZQAAAAM=",
-        "AAAAAAAAAC5TdG9yZSB0aGUgYWRtaW4uIENhbGxhYmxlIG9uY2UuIEF1dGg6IGBhZG1pbmAuAAAAAAAEaW5pdAAAAAEAAAAAAAAABWFkbWluAAAAAAAAEwAAAAEAAAPpAAAAAgAAB9AAAAALT3JhY2xlRXJyb3IA",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAAC09yYWNsZUVycm9yAAAAAAMAAABVVW51c2VkIHNpbmNlIHRoZSBjb250cmFjdCBtb3ZlZCB0byBhIGNvbnN0cnVjdG9yLiBLZXB0IHNvIGNvZGVzIGFyZSBuZXZlciByZW51bWJlcmVkLgAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAADk5vdEluaXRpYWxpemVkAAAAAAACAAAAAAAAAAxJbnZhbGlkUHJpY2UAAAAD",
         "AAAAAAAAABlBc3NldHMgdGhhdCBoYXZlIGEgcHJpY2UuAAAAAAAABmFzc2V0cwAAAAAAAAAAAAEAAAPqAAAH0AAAAAVBc3NldAAAAA==",
         "AAAAAAAAAClBbHdheXMgMTQgKHNhbWUgYXMgUmVmbGVjdG9yIGZpYXQgZmVlZHMpLgAAAAAAAAhkZWNpbWFscwAAAAAAAAABAAAABA==",
         "AAAAAAAAACpgTm9uZWAgaWYgdGhlIGFzc2V0IGhhcyBuZXZlciBiZWVuIHByaWNlZC4AAAAAAAlsYXN0cHJpY2UAAAAAAAABAAAAAAAAAAVhc3NldAAAAAAAB9AAAAAFQXNzZXQAAAAAAAABAAAD6AAAB9AAAAAJUHJpY2VEYXRhAAAA",
         "AAAAAAAAAEBBZG1pbiBvbmx5LiBTdG9yZXMgYHByaWNlYCB3aXRoIHRpbWVzdGFtcCA9IGN1cnJlbnQgbGVkZ2VyIHRpbWUuAAAACXNldF9wcmljZQAAAAAAAAIAAAAAAAAABWFzc2V0AAAAAAAH0AAAAAVBc3NldAAAAAAAAAAAAAAFcHJpY2UAAAAAAAALAAAAAQAAA+kAAAACAAAH0AAAAAtPcmFjbGVFcnJvcgA=",
         "AAAAAAAAABNBbHdheXMgMzAwIHNlY29uZHMuAAAAAApyZXNvbHV0aW9uAAAAAAAAAAAAAQAAAAQ=",
         "AAAAAAAAAEdBZG1pbiBvbmx5LiBTdG9yZXMgYHByaWNlYCB3aXRoIHRoZSBnaXZlbiB0aW1lc3RhbXAgKHN0YWxlLXByaWNlIGRlbW8pLgAAAAAMc2V0X3ByaWNlX2F0AAAAAwAAAAAAAAAFYXNzZXQAAAAAAAfQAAAABUFzc2V0AAAAAAAAAAAAAAVwcmljZQAAAAAAAAsAAAAAAAAACXRpbWVzdGFtcAAAAAAAAAYAAAABAAAD6QAAAAIAAAfQAAAAC09yYWNsZUVycm9yAA==",
+        "AAAAAAAAADhSdW5zIG9uY2UsIGF0b21pY2FsbHkgd2l0aCBkZXBsb3ltZW50LiBTdG9yZXMgdGhlIGFkbWluLgAAAA1fX2NvbnN0cnVjdG9yAAAAAAAAAQAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAA==",
         "AAAAAgAAAAAAAAAAAAAABUFzc2V0AAAAAAAAAgAAAAEAAAAAAAAAB1N0ZWxsYXIAAAAAAQAAABMAAAABAAAAAAAAAAVPdGhlcgAAAAAAAAEAAAAR",
         "AAAAAQAAAAAAAAAAAAAACVByaWNlRGF0YQAAAAAAAAIAAABSUHJpY2Ugd2l0aCBgZGVjaW1hbHMoKWAgZGVjaW1hbHMgKDE0IGZvciBmaWF0IGZlZWRzKS4gVVNEIHBlciAxIHVuaXQgb2YgdGhlIGFzc2V0LgAAAAAABXByaWNlAAAAAAAACwAAAERVbml4IHNlY29uZHMgaW4gb3VyIG1vY2suIChSZWZsZWN0b3IncyB1bml0IGlzIGNoZWNrZWQgaW4gaXNzdWUgIzQuKQAAAAl0aW1lc3RhbXAAAAAAAAAG" ]),
       options
     )
   }
   public readonly fromJSON = {
-    init: this.txFromJSON<Result<void>>,
-        assets: this.txFromJSON<Array<Asset>>,
+    assets: this.txFromJSON<Array<Asset>>,
         decimals: this.txFromJSON<u32>,
         lastprice: this.txFromJSON<Option<PriceData>>,
         set_price: this.txFromJSON<Result<void>>,

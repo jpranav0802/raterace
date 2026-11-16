@@ -1,5 +1,5 @@
 //! Mock oracle with the same read interface as Reflector (SEP-40).
-//! Function list is FROZEN: docs/BUILD_PLAN.md section 4.4.
+//! Read interface matches Reflector: docs/BUILD_PLAN.md section 4.4.
 //!
 //! Testnet stand-in for the Reflector fiat feed. The admin sets prices by hand;
 //! `set_price_at` lets the demo show the RateRace contract rejecting a stale price.
@@ -16,6 +16,7 @@ const TTL_EXTEND: u32 = 30 * DAY_LEDGERS;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum OracleError {
+    /// Unused since the contract moved to a constructor. Kept so codes are never renumbered.
     AlreadyInitialized = 1,
     NotInitialized = 2,
     InvalidPrice = 3,
@@ -69,14 +70,9 @@ fn store(env: &Env, asset: Asset, price: i128, timestamp: u64) -> Result<(), Ora
 
 #[contractimpl]
 impl MockOracle {
-    /// Store the admin. Callable once. Auth: `admin`.
-    pub fn init(env: Env, admin: Address) -> Result<(), OracleError> {
-        admin.require_auth();
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(OracleError::AlreadyInitialized);
-        }
+    /// Runs once, atomically with deployment. Stores the admin.
+    pub fn __constructor(env: Env, admin: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
-        Ok(())
     }
 
     /// Admin only. Stores `price` with timestamp = current ledger time.
@@ -137,10 +133,9 @@ mod test {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().set_timestamp(1_800_000_000);
-        let id = env.register(MockOracle, ());
-        let client = MockOracleClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.init(&admin);
+        let id = env.register(MockOracle, (admin,));
+        let client = MockOracleClient::new(&env, &id);
         (env, id, client)
     }
 
@@ -208,33 +203,12 @@ mod test {
     }
 
     #[test]
-    fn init_twice_fails() {
-        let (env, _id, client) = setup();
-        assert_eq!(
-            client.try_init(&Address::generate(&env)),
-            Err(Ok(OracleError::AlreadyInitialized))
-        );
-    }
-
-    #[test]
     fn only_admin_can_set_prices() {
         let (env, _id, client) = setup();
         env.set_auths(&[]);
         assert!(client.try_set_price(&mxn(), &MXN_PRICE).is_err());
         assert!(client.try_set_price_at(&mxn(), &MXN_PRICE, &1).is_err());
         assert_eq!(client.lastprice(&mxn()), None);
-    }
-
-    #[test]
-    fn set_before_init_fails() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let id = env.register(MockOracle, ());
-        let client = MockOracleClient::new(&env, &id);
-        assert_eq!(
-            client.try_set_price(&mxn(), &MXN_PRICE),
-            Err(Ok(OracleError::NotInitialized))
-        );
     }
 
     /// The RateRace contract reads the oracle through `oracle_interface::OracleClient`.

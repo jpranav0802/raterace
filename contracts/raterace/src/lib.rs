@@ -35,14 +35,32 @@ pub struct RateRaceContract;
 impl RateRaceContract {
     // ---------- setup (registry.rs) ----------
 
-    /// One-time setup. Auth: `config.admin`.
-    pub fn init(env: Env, config: Config) -> Result<(), Error> {
+    /// Runs once, atomically with deployment, so nobody can initialise the contract
+    /// before its deployer does. Auth: `config.admin`.
+    pub fn __constructor(env: Env, config: Config) -> Result<(), Error> {
         registry::init(&env, config)
     }
 
     /// Replace the config (e.g. demo time windows). Auth: current admin.
     pub fn update_config(env: Env, config: Config) -> Result<(), Error> {
         registry::update_config(&env, config)
+    }
+
+    // ---------- emergency stop (OpenZeppelin Pausable) ----------
+
+    /// Stop accepting new orders. Orders already open can still be paid, confirmed,
+    /// disputed and refunded, so money is never trapped. Auth: admin.
+    pub fn pause(env: Env) -> Result<(), Error> {
+        registry::pause(&env)
+    }
+
+    /// Resume accepting new orders. Auth: admin.
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        registry::unpause(&env)
+    }
+
+    pub fn paused(env: Env) -> bool {
+        registry::paused(&env)
     }
 
     // ---------- anchors (registry.rs) ----------

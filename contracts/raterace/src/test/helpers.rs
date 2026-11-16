@@ -74,6 +74,23 @@ impl TestOracle {
 
 // ---------- setup ----------
 
+/// Demo values from docs/BUILD_PLAN.md (payout 120 s, challenge 60 s, bond 105%, penalty 5%).
+pub fn demo_config(admin: &Address, usdc_id: &Address, oracle_id: &Address) -> Config {
+    Config {
+        admin: admin.clone(),
+        usdc: usdc_id.clone(),
+        oracle: oracle_id.clone(),
+        max_oracle_age_s: 600,
+        payout_window_s: 120,
+        challenge_window_s: 60,
+        bond_ratio_bps: 10_500,
+        penalty_bps: 500,
+        default_max_markup_bps: 300,
+        default_daily_cap: usdc(1_000),
+        max_slashes: 1,
+    }
+}
+
 pub struct TestAnchor {
     pub address: Address,
     /// ed25519 key the anchor signs quotes with.
@@ -96,28 +113,16 @@ pub struct Setup {
 }
 
 impl Setup {
-    /// Fully initialised world: config set, oracle priced, sender holds 10,000 USDC,
-    /// three active anchors with 5,000 USDC each of which 2,000 is bonded.
-    /// All auths are mocked (`env.mock_all_auths()`).
+    /// Fully initialised world: contract deployed with the demo config, oracle priced,
+    /// sender holds 10,000 USDC, three active anchors with 5,000 USDC each of which 2,000
+    /// is bonded. All auths are mocked (`env.mock_all_auths()`).
     pub fn new() -> Setup {
-        let mut s = Setup::bare();
-        s.client.init(&s.default_config());
-        for i in 0..3u8 {
-            let anchor = s.new_anchor(i + 1);
-            s.client.register_anchor(
-                &anchor.address,
-                &s.signing_key_bytes(&anchor),
-                &vec![&s.env, corridor()],
-            );
-            s.client.add_bond(&anchor.address, &usdc(2_000));
-            s.client.set_active(&anchor.address, &true);
-            s.anchors.push(anchor);
-        }
-        s
+        Setup::with_config(|_| {})
     }
 
-    /// Contracts deployed and funded, but `init` NOT called and no anchors registered.
-    pub fn bare() -> Setup {
+    /// Like `new()`, but lets a test change the config the contract is deployed with.
+    /// Panics if the constructor rejects the config.
+    pub fn with_config(tweak: impl FnOnce(&mut Config)) -> Setup {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().set_timestamp(START_TIME);
@@ -134,11 +139,14 @@ impl Setup {
         let oracle = TestOracleClient::new(&env, &oracle_id);
         oracle.set(&Asset::Other(asset_code()), &MXN_PRICE, &START_TIME);
 
-        let contract_id = env.register(RateRaceContract, ());
+        let mut config = demo_config(&admin, &usdc_id, &oracle_id);
+        tweak(&mut config);
+        // The config is a constructor argument: deploy and initialise are one atomic step.
+        let contract_id = env.register(RateRaceContract, (config,));
         let client = RateRaceContractClient::new(&env, &contract_id);
         let token = TokenClient::new(&env, &usdc_id);
 
-        Setup {
+        let mut s = Setup {
             env,
             admin,
             sender,
@@ -150,24 +158,24 @@ impl Setup {
             oracle,
             anchors: std::vec::Vec::new(),
             next_request: 0,
+        };
+        for i in 0..3u8 {
+            let anchor = s.new_anchor(i + 1);
+            s.client.register_anchor(
+                &anchor.address,
+                &s.signing_key_bytes(&anchor),
+                &vec![&s.env, corridor()],
+            );
+            s.client.add_bond(&anchor.address, &usdc(2_000));
+            s.client.set_active(&anchor.address, &true);
+            s.anchors.push(anchor);
         }
+        s
     }
 
-    /// Demo values from docs/BUILD_PLAN.md (payout 120 s, challenge 60 s, bond 105%, penalty 5%).
+    /// The config `new()` deploys with.
     pub fn default_config(&self) -> Config {
-        Config {
-            admin: self.admin.clone(),
-            usdc: self.usdc_id.clone(),
-            oracle: self.oracle_id.clone(),
-            max_oracle_age_s: 600,
-            payout_window_s: 120,
-            challenge_window_s: 60,
-            bond_ratio_bps: 10_500,
-            penalty_bps: 500,
-            default_max_markup_bps: 300,
-            default_daily_cap: usdc(1_000),
-            max_slashes: 1,
-        }
+        demo_config(&self.admin, &self.usdc_id, &self.oracle_id)
     }
 
     /// A funded (5,000 USDC) but unregistered anchor with a deterministic signing key.
