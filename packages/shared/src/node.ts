@@ -14,6 +14,39 @@ function loadDotenv() {
   if (loaded) return;
   dotenv.config({ path: resolve(REPO_ROOT, ".env"), quiet: true });
   loaded = true;
+  fillPublicValuesFromDeployment();
+}
+
+/**
+ * A host (Render) only gets the secrets typed into its dashboard, not the .env file. Every
+ * PUBLIC value the services need (contract IDs, account addresses, the deploy ledger) is
+ * also in the committed deployments/testnet.json, so fill in whichever of those are missing.
+ * Values already set (from .env or the host) always win. No secret is ever read from here.
+ */
+function fillPublicValuesFromDeployment() {
+  const p = resolve(REPO_ROOT, "deployments/testnet.json");
+  if (!existsSync(p)) return;
+  let d: Deployment;
+  try {
+    d = JSON.parse(readFileSync(p, "utf8")) as Deployment;
+  } catch {
+    return;
+  }
+  const values: Record<string, string | undefined> = {
+    RATERACE_CONTRACT_ID: d.contracts?.raterace,
+    ORACLE_CONTRACT_ID: d.contracts?.oracle,
+    USDC_CONTRACT_ID: d.contracts?.usdc,
+    USDC_CODE: d.usdc?.code,
+    USDC_ISSUER_PUBLIC: d.usdc?.issuer,
+    DEPLOY_LEDGER: d.deployLedger ? String(d.deployLedger) : undefined,
+    ADMIN_PUBLIC: d.accounts?.admin,
+    SPONSOR_PUBLIC: d.accounts?.sponsor,
+    DEMO_SENDER_PUBLIC: d.accounts?.demoSender,
+  };
+  for (const a of d.anchors ?? []) values[`${a.name.toUpperCase()}_PUBLIC`] = a.address;
+  for (const [key, value] of Object.entries(values)) {
+    if (value && !process.env[key]) process.env[key] = value;
+  }
 }
 
 /** Read an env variable from the root .env; throws a clear error if missing. */
