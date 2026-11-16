@@ -1,10 +1,14 @@
 // Quote router. Owner: Abhiraj (issues #13, #14). API is FROZEN: docs/BUILD_PLAN.md section 4.10.
 //
 //   POST /rfq            ask every anchor for a signed quote, verify each one, rank by landed amount (#13)
+//                        mode "market": real providers' live prices bid, signed and bonded by test stand-ins
+//                        mode "anchors": real Stellar anchors bid with simulated prices, same stand-ins
 //   GET  /anchors        anchors with their on-chain bond and track record (#13)
 //   POST /submit         sponsor (fee-bump) a sender-signed transaction so the sender pays no fees (#14)
 //   POST /onboard/fund   create a demo account with Friendbot (#14)
 //   POST /onboard/usdc   send 1,000 test USDC to a demo account (#14)
+//   GET  /market         the oracle MXN price and its age
+//   GET  /benchmarks     real providers' live quotes for the same amount, checked against the 3% rule
 //   GET  /health
 //
 // The router never holds user funds and cannot forge quotes: every quote is checked against
@@ -37,6 +41,9 @@ import {
   hexToBytes,
   localPerUsd,
   markupBps,
+  marketLocal,
+  landedLocal,
+  toUnits,
   type QuoteJson,
   type RankedQuote,
   type RfqResponse,
@@ -52,12 +59,19 @@ const deployment = loadDeployment();
 if (!deployment) throw new Error('No deployments/testnet.json. Run "npm run deploy" first.');
 
 const RATERACE_ID = deployment.contracts.raterace;
+const ANCHORS = deployment.anchors;
 const USDC_CODE = deployment.usdc.code;
 const USDC_ISSUER = deployment.usdc.issuer;
 const QUOTE_LIFETIME_S = 120;
 const ANCHOR_TIMEOUT_MS = 4_000;
 const MAX_MARKUP_BPS = 300;
 const ONBOARD_USDC = "1000";
+/**
+ * Test anchors allowed to stand in for real providers in market mode. Gamma is left out on
+ * purpose: its payout worker never pays (it is the demo's failing provider), and a real
+ * provider's price must not look like it failed because of who stood in for it.
+ */
+const MARKET_STAND_INS = (process.env.MARKET_STAND_INS ?? "alpha,beta").split(",").map((s) => s.trim());
 
 const { raterace, oracle } = makeClients({
   rpcUrl: cfg.rpcUrl,
@@ -121,9 +135,343 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "router", usdc: { code: USDC_CODE, issuer: USDC_ISSUER } });
 });
 
+// ---------- GET /market ----------
+// The oracle's current MXN price, for showing the live market rate before quotes are asked.
+
+app.get("/market", async (_req, res) => {
+  try {
+    const price = await oraclePrice(oracle, ASSET_MXN);
+    if (!price) throw new HttpError(503, "Market rate unavailable");
+    res.json({
+      price: price.price.toString(),
+      timestamp: price.timestamp,
+      mxnPerUsd: localPerUsd(price.price),
+      ageS: Math.max(0, Math.floor(Date.now() / 1000) - price.timestamp),
+    });
+  } catch (e) {
+    send(res, e);
+  }
+});
+
+// ---------- real providers' live prices (Wise public comparison data) ----------
+// Used by GET /benchmarks and by /rfq in "market" mode. Each quote is run through the
+// contract's own markup formula against our oracle price.
+
+interface Benchmark {
+  name: string;
+  type: string;
+  feeUsd: number;
+  /** Exchange rate the provider applies, MXN per USD. */
+  rate: number;
+  /** What the family receives, MXN units (7 decimals). */
+  receivedLocal: string;
+  /** Below market, same formula as the contract (negative = better than market). */
+  markupBps: number;
+  wouldPassCap: boolean;
+  collectedAt: string;
+}
+interface BenchmarksResponse {
+  source: string;
+  sourceUrl: string;
+  fetchedAt: number;
+  sendUsdc: string;
+  oracle: { price: string; mxnPerUsd: number };
+  marketLocal: string;
+  providers: Benchmark[];
+}
+const benchmarkCache = new Map<string, { at: number; data: BenchmarksResponse }>();
+const BENCHMARK_TTL_MS = 5 * 60_000;
+
+async function getBenchmarks(send: bigint, price: { price: bigint }): Promise<BenchmarksResponse> {
+  const key = send.toString();
+  const cached = benchmarkCache.get(key);
+  if (cached && Date.now() - cached.at < BENCHMARK_TTL_MS) return cached.data;
+  const sourceUrl = `https://api.wise.com/v4/comparisons/?sourceCurrency=USD&targetCurrency=MXN&sendAmount=${fromUnits(send, 2)}`;
+  const r = await fetch(sourceUrl, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  if (!r?.ok) throw new HttpError(502, "Live provider prices are unavailable right now");
+  const j = (await r.json()) as {
+    providers?: { name: string; type: string; quotes: { fee: number; rate: number; receivedAmount: number; dateCollected: string }[] }[];
+  };
+  const providers: Benchmark[] = (j.providers ?? [])
+    .filter((p) => p.quotes?.[0] && p.quotes[0].receivedAmount > 0)
+    .map((p) => {
+      const q = p.quotes[0];
+      const receivedLocal = toUnits(q.receivedAmount.toFixed(2));
+      const m = markupBps(send, receivedLocal, price.price);
+      return {
+        name: p.name,
+        type: p.type,
+        feeUsd: q.fee,
+        rate: q.rate,
+        receivedLocal: receivedLocal.toString(),
+        markupBps: m,
+        wouldPassCap: m <= MAX_MARKUP_BPS,
+        collectedAt: q.dateCollected,
+      };
+    })
+    .sort((a, b) => (BigInt(b.receivedLocal) > BigInt(a.receivedLocal) ? 1 : -1));
+  const data: BenchmarksResponse = {
+    source: "Wise public comparison data",
+    sourceUrl,
+    fetchedAt: Math.floor(Date.now() / 1000),
+    sendUsdc: key,
+    oracle: { price: price.price.toString(), mxnPerUsd: localPerUsd(price.price) },
+    marketLocal: marketLocal(send, price.price).toString(),
+    providers,
+  };
+  benchmarkCache.set(key, { at: Date.now(), data });
+  return data;
+}
+
+app.get("/benchmarks", rateLimit("benchmarks", 30, 60_000), async (req, res) => {
+  try {
+    const sendUsdc = String(req.query.sendUsdc ?? "");
+    if (!/^\d+$/.test(sendUsdc) || BigInt(sendUsdc) <= 0n) throw new HttpError(400, "sendUsdc must be a positive integer string");
+    const price = await oraclePrice(oracle, ASSET_MXN);
+    if (!price) throw new HttpError(503, "Market rate unavailable");
+    res.json(await getBenchmarks(BigInt(sendUsdc), price));
+  } catch (e) {
+    send(res, e);
+  }
+});
+
 // ---------- POST /rfq (#13) ----------
 
 type AnchorQuoteResponse = { raterace?: { quote?: Omit<QuoteJson, "signature">; signature?: string } };
+
+/** Extra, optional field on the /rfq response: what happened with each bidder (for the demo's live view). */
+type AuditOutcome = "verified" | "no-quote" | "mismatch" | "bad-signature" | "inactive" | "over-cap" | "no-bond" | "error";
+interface AuditRow {
+  name: string;
+  displayName: string;
+  ms: number;
+  outcome: AuditOutcome;
+  markupBps?: number;
+  /** Market mode: the real provider whose live price this lane carries. */
+  live?: { type: string; feeUsd: number; rate: number; collectedAt: string };
+  /** Anchors mode: a real Stellar anchor's name with a simulated price. */
+  sim?: { note: string };
+  /** Market/anchors mode: the registered test anchor that signed and backs this price. */
+  standIn?: { name: string; displayName: string };
+}
+type Anchor = (typeof ANCHORS)[number];
+interface StandInRequest {
+  provider: string;
+  landed_local: string;
+  fee_local: string;
+  spread_bps: number;
+}
+interface RfqCtx {
+  requestId: string;
+  expiresAt: number;
+  sendUsdc: bigint;
+  sender: string;
+  price: { price: bigint };
+}
+
+/**
+ * Ask one anchor for a signed quote and verify it exactly as the contract will: digest from
+ * the contract, key from the anchor's on-chain registration, markup against the oracle.
+ */
+async function askAnchor(a: Anchor, ctx: RfqCtx, row: AuditRow, standIn?: StandInRequest): Promise<RankedQuote | null> {
+  const done = (outcome: AuditOutcome) => {
+    row.outcome = outcome;
+    return null;
+  };
+  const t0 = Date.now();
+  const r = await fetch(`${a.quoteUrl}/quote`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sell_asset: `stellar:${USDC_CODE}:${USDC_ISSUER}`,
+      buy_asset: `iso4217:${ASSET_MXN}`,
+      sell_amount: fromUnits(ctx.sendUsdc, 7),
+      context: "sep31",
+      raterace: {
+        request_id: ctx.requestId,
+        corridor: CORRIDOR_MX_SPEI,
+        sender: ctx.sender,
+        expires_at: ctx.expiresAt,
+        ...(standIn ? { stand_in: standIn } : {}),
+      },
+    }),
+    signal: AbortSignal.timeout(ANCHOR_TIMEOUT_MS),
+  });
+  row.ms = Date.now() - t0;
+  if (!r.ok) return done("no-quote");
+  const json = (await r.json()) as AnchorQuoteResponse;
+  const quote = json.raterace?.quote;
+  const signature = json.raterace?.signature;
+  if (!quote || typeof signature !== "string" || !/^[0-9a-f]{128}$/.test(signature)) return done("no-quote");
+
+  // The quote must be exactly what we asked for, from the anchor we asked.
+  if (
+    quote.anchor !== a.address ||
+    quote.requestId !== ctx.requestId ||
+    quote.corridor !== CORRIDOR_MX_SPEI ||
+    quote.assetCode !== ASSET_MXN ||
+    quote.sendUsdc !== ctx.sendUsdc.toString() ||
+    quote.expiresAt !== ctx.expiresAt ||
+    !/^\d+$/.test(quote.landedLocal) ||
+    (standIn && quote.landedLocal !== standIn.landed_local)
+  ) {
+    console.warn(`[router] ${a.name}: quote doesn't match the request, skipped`);
+    return done("mismatch");
+  }
+
+  const [digest, onChain] = await Promise.all([
+    quoteDigest(raterace, toContractQuote(quote)),
+    raterace.get_anchor({ anchor: a.address }).then((t) => t.result.unwrap()),
+  ]);
+  if (!onChain.active) return done("inactive");
+  const key = Keypair.fromPublicKey(StrKey.encodeEd25519PublicKey(Buffer.from(onChain.signing_key)));
+  if (!key.verify(digest, Buffer.from(hexToBytes(signature)))) {
+    console.warn(`[router] ${a.name}: invalid signature, skipped`);
+    return done("bad-signature");
+  }
+
+  const markup = markupBps(ctx.sendUsdc, BigInt(quote.landedLocal), ctx.price.price);
+  row.markupBps = markup;
+  if (markup > MAX_MARKUP_BPS) return done("over-cap");
+  row.outcome = "verified";
+  return {
+    ...quote,
+    signature,
+    markupBps: markup,
+    reputation: { filled: onChain.filled, disputed: onChain.disputed, slashed: onChain.slashed },
+    valid: true,
+  };
+}
+
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+/** Simulated anchors bid with their own configured prices (the original mode). */
+async function simulatedBids(ctx: RfqCtx, audit: AuditRow[]) {
+  return Promise.allSettled(
+    ANCHORS.map((a) => {
+      const row: AuditRow = { name: a.name, displayName: a.displayName, ms: 0, outcome: "error" };
+      audit.push(row);
+      return askAnchor(a, ctx, row);
+    }),
+  );
+}
+
+/**
+ * Market mode: every real provider's live price bids. Prices outside the 3% rule are refused
+ * up front; each remaining price is signed and backed (bond) by a registered test anchor
+ * acting as a stand-in, so the contract can lock it. Stand-ins are picked by free bond.
+ */
+async function marketBids(ctx: RfqCtx, audit: AuditRow[]) {
+  const bm = await getBenchmarks(ctx.sendUsdc, ctx.price);
+  const [anchorsOnChain, chainConfig] = await Promise.all([
+    Promise.all(ANCHORS.map((a) => raterace.get_anchor({ anchor: a.address }).then((t) => t.result.unwrap()))),
+    raterace.get_config().then((t) => t.result.unwrap()),
+  ]);
+  const reserve = (ctx.sendUsdc * BigInt(chainConfig.bond_ratio_bps)) / 10_000n;
+  const free = anchorsOnChain.map((on, i) =>
+    on.active && MARKET_STAND_INS.includes(ANCHORS[i].name) ? BigInt(on.bond) - BigInt(on.reserved) : 0n,
+  );
+  const mid = localPerUsd(ctx.price.price);
+
+  const jobs: Promise<RankedQuote | null>[] = [];
+  for (const p of bm.providers) {
+    const received = BigInt(p.receivedLocal);
+    const markup = markupBps(ctx.sendUsdc, received, ctx.price.price);
+    const row: AuditRow = {
+      name: `live-${slug(p.name)}`,
+      displayName: p.name,
+      ms: 0,
+      outcome: "error",
+      markupBps: markup,
+      live: { type: p.type, feeUsd: p.feeUsd, rate: p.rate, collectedAt: p.collectedAt },
+    };
+    audit.push(row);
+    if (markup > MAX_MARKUP_BPS) {
+      row.outcome = "over-cap";
+      continue;
+    }
+    // The stand-in with the most free bond takes this price.
+    let best = -1;
+    free.forEach((f, i) => {
+      if (f >= reserve && (best < 0 || f > free[best])) best = i;
+    });
+    if (best < 0) {
+      row.outcome = "no-bond";
+      continue;
+    }
+    free[best] -= reserve;
+    const a = ANCHORS[best];
+    row.standIn = { name: a.name, displayName: a.displayName };
+    const standIn: StandInRequest = {
+      provider: p.name,
+      landed_local: p.receivedLocal,
+      fee_local: toUnits((p.feeUsd * p.rate).toFixed(2)).toString(),
+      spread_bps: Math.round(((mid - p.rate) / mid) * 10_000),
+    };
+    jobs.push(
+      askAnchor(a, ctx, row, standIn).then((q) => (q ? { ...q, anchorName: row.name, displayName: p.name } : null)),
+    );
+  }
+  return { settled: await Promise.allSettled(jobs), bm };
+}
+
+
+/**
+ * "anchors" mode: real Stellar anchors that pay out in Mexico bid for the transfer.
+ * Their real prices aren't public, so these are SIMULATED prices in a realistic range (a
+ * rate margin plus a payout fee), with a little per-request variation so the order can
+ * change. The web app says so on screen. Each price is signed and bonded on testnet by one
+ * of our honest test anchors standing in, exactly like market mode.
+ */
+const STELLAR_ANCHOR_BIDDERS = [
+  { name: "Bitso", note: "Exchange · SPEI payouts", spreadBps: 45, feeLocal: "5" },
+  { name: "Koywe", note: "On/off-ramp · SPEI", spreadBps: 75, feeLocal: "0" },
+  { name: "Etherfuse", note: "On/off-ramp · SPEI", spreadBps: 60, feeLocal: "12" },
+  { name: "Alfred Pay", note: "On/off-ramp · SPEI", spreadBps: 105, feeLocal: "0" },
+  { name: "MoneyGram", note: "Cash and bank network", spreadBps: 140, feeLocal: "20" },
+];
+const JITTER_BPS = 10;
+
+async function anchorBids(ctx: RfqCtx, audit: AuditRow[]) {
+  const [anchorsOnChain, chainConfig] = await Promise.all([
+    Promise.all(ANCHORS.map((a) => raterace.get_anchor({ anchor: a.address }).then((t) => t.result.unwrap()))),
+    raterace.get_config().then((t) => t.result.unwrap()),
+  ]);
+  const reserve = (ctx.sendUsdc * BigInt(chainConfig.bond_ratio_bps)) / 10_000n;
+  const free = anchorsOnChain.map((on, i) =>
+    on.active && MARKET_STAND_INS.includes(ANCHORS[i].name) ? BigInt(on.bond) - BigInt(on.reserved) : 0n,
+  );
+
+  const jobs: Promise<RankedQuote | null>[] = [];
+  for (const b of STELLAR_ANCHOR_BIDDERS) {
+    const spread = Math.max(0, b.spreadBps + Math.round((Math.random() * 2 - 1) * JITTER_BPS));
+    const fee = toUnits(b.feeLocal);
+    const landed = landedLocal(ctx.sendUsdc, ctx.price.price, spread, fee);
+    const row: AuditRow = {
+      name: `anchor-${slug(b.name)}`,
+      displayName: b.name,
+      ms: 0,
+      outcome: "error",
+      markupBps: markupBps(ctx.sendUsdc, landed, ctx.price.price),
+      sim: { note: b.note },
+    };
+    audit.push(row);
+    let best = -1;
+    free.forEach((f, i) => {
+      if (f >= reserve && (best < 0 || f > free[best])) best = i;
+    });
+    if (best < 0) {
+      row.outcome = "no-bond";
+      continue;
+    }
+    free[best] -= reserve;
+    const a = ANCHORS[best];
+    row.standIn = { name: a.name, displayName: a.displayName };
+    const standIn: StandInRequest = { provider: b.name, landed_local: landed.toString(), fee_local: fee.toString(), spread_bps: spread };
+    jobs.push(askAnchor(a, ctx, row, standIn).then((q) => (q ? { ...q, anchorName: row.name, displayName: b.name } : null)));
+  }
+  return Promise.allSettled(jobs);
+}
 
 app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
   try {
@@ -136,75 +484,32 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
     if (typeof body.sender !== "string" || !StrKey.isValidEd25519PublicKey(body.sender)) {
       throw new HttpError(400, "sender must be a valid G... address");
     }
-    const sendUsdc = BigInt(body.sendUsdc);
-    const requestId = randomBytes(32).toString("hex");
-    const expiresAt = Math.floor(Date.now() / 1000) + QUOTE_LIFETIME_S;
-
     const price = await oraclePrice(oracle, ASSET_MXN);
     if (!price) throw new HttpError(503, "Market rate unavailable, try again in a minute");
+    const ctx: RfqCtx = {
+      requestId: randomBytes(32).toString("hex"),
+      expiresAt: Math.floor(Date.now() / 1000) + QUOTE_LIFETIME_S,
+      sendUsdc: BigInt(body.sendUsdc),
+      sender: body.sender,
+      price,
+    };
 
-    // Ask every anchor in parallel; any that fail, time out or return 503 are skipped.
-    const settled = await Promise.allSettled(
-      deployment.anchors.map(async (a): Promise<RankedQuote | null> => {
-        const r = await fetch(`${a.quoteUrl}/quote`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            sell_asset: `stellar:${USDC_CODE}:${USDC_ISSUER}`,
-            buy_asset: `iso4217:${ASSET_MXN}`,
-            sell_amount: fromUnits(sendUsdc, 7),
-            context: "sep31",
-            raterace: { request_id: requestId, corridor: CORRIDOR_MX_SPEI, sender: body.sender, expires_at: expiresAt },
-          }),
-          signal: AbortSignal.timeout(ANCHOR_TIMEOUT_MS),
-        });
-        if (!r.ok) return null;
-        const json = (await r.json()) as AnchorQuoteResponse;
-        const quote = json.raterace?.quote;
-        const signature = json.raterace?.signature;
-        if (!quote || typeof signature !== "string" || !/^[0-9a-f]{128}$/.test(signature)) return null;
-
-        // The quote must be exactly what we asked for, from the anchor we asked.
-        if (
-          quote.anchor !== a.address ||
-          quote.requestId !== requestId ||
-          quote.corridor !== CORRIDOR_MX_SPEI ||
-          quote.assetCode !== ASSET_MXN ||
-          quote.sendUsdc !== sendUsdc.toString() ||
-          quote.expiresAt !== expiresAt ||
-          !/^\d+$/.test(quote.landedLocal)
-        ) {
-          console.warn(`[router] ${a.name}: quote doesn't match the request, skipped`);
-          return null;
-        }
-
-        // Verify the signature like the contract will: digest from the contract,
-        // key from the anchor's on-chain registration.
-        const [digest, onChain] = await Promise.all([
-          quoteDigest(raterace, toContractQuote(quote)),
-          raterace.get_anchor({ anchor: a.address }).then((t) => t.result.unwrap()),
-        ]);
-        if (!onChain.active) return null;
-        const key = Keypair.fromPublicKey(StrKey.encodeEd25519PublicKey(Buffer.from(onChain.signing_key)));
-        if (!key.verify(digest, Buffer.from(hexToBytes(signature)))) {
-          console.warn(`[router] ${a.name}: invalid signature, skipped`);
-          return null;
-        }
-
-        const markup = markupBps(sendUsdc, BigInt(quote.landedLocal), price.price);
-        if (markup > MAX_MARKUP_BPS) return null;
-
-        return {
-          ...quote,
-          signature,
-          markupBps: markup,
-          reputation: { filled: onChain.filled, disputed: onChain.disputed, slashed: onChain.slashed },
-          valid: true,
-        };
-      }),
-    );
-    settled.forEach((s, i) => {
-      if (s.status === "rejected") console.warn(`[router] ${deployment.anchors[i].name}: ${(s.reason as Error).message}`);
+    const audit: AuditRow[] = [];
+    const mode: "simulated" | "market" | "anchors" =
+      body.mode === "market" ? "market" : body.mode === "anchors" ? "anchors" : "simulated";
+    let settled: PromiseSettledResult<RankedQuote | null>[];
+    let source: { name: string; url: string; oldestCollected?: string } | undefined;
+    if (mode === "anchors") {
+      settled = await anchorBids(ctx, audit);
+    } else if (mode === "market") {
+      const r = await marketBids(ctx, audit);
+      settled = r.settled;
+      source = { name: r.bm.source, url: r.bm.sourceUrl, oldestCollected: r.bm.providers.map((p) => p.collectedAt).sort()[0] };
+    } else {
+      settled = await simulatedBids(ctx, audit);
+    }
+    settled.forEach((s) => {
+      if (s.status === "rejected") console.warn(`[router] bid failed: ${(s.reason as Error).message}`);
     });
 
     const quotes = settled
@@ -212,9 +517,12 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
       .filter((q): q is RankedQuote => q !== null)
       .sort((x, y) => (BigInt(y.landedLocal) > BigInt(x.landedLocal) ? 1 : BigInt(y.landedLocal) < BigInt(x.landedLocal) ? -1 : 0));
 
-    const out: RfqResponse = {
-      requestId,
-      expiresAt,
+    const out: RfqResponse & { audit: AuditRow[]; mode: typeof mode; source?: typeof source } = {
+      mode,
+      source,
+      audit,
+      requestId: ctx.requestId,
+      expiresAt: ctx.expiresAt,
       oracle: { price: price.price.toString(), timestamp: price.timestamp, mxnPerUsd: localPerUsd(price.price) },
       onRampFeeUsd: "0.00",
       quotes,
@@ -373,12 +681,18 @@ app.post("/onboard/fund", rateLimit("fund", 5, 60 * 60_000), async (req, res) =>
       /* not found: create it */
     }
     const r = await fetch(`${TESTNET.friendbotUrl}?addr=${encodeURIComponent(pk)}`);
+    const text = await r.text();
     if (!r.ok) {
       // Friendbot returns 400 if the account already exists (race with another request).
-      const text = await r.text();
       if (!/createAccountAlreadyExist|already exists/i.test(text)) throw new HttpError(502, "Friendbot failed, try again");
     }
-    res.json({ ok: true });
+    let hash: string | undefined;
+    try {
+      hash = (JSON.parse(text) as { hash?: string }).hash;
+    } catch {
+      /* not JSON: fine */
+    }
+    res.json({ ok: true, hash });
   } catch (e) {
     send(res, e);
   }

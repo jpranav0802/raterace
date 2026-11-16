@@ -9,6 +9,7 @@
 import { Asset, BASE_FEE, Horizon, Keypair, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { AMOUNT_DECIMALS, TESTNET, toUnits } from "@raterace/shared";
 import { api } from "./api";
+import { chainlog } from "./chainlog";
 import { config } from "./config";
 
 const SECRET_KEY = "raterace_demo_secret";
@@ -62,9 +63,16 @@ export async function ensureReady(sendUsdcUnits: bigint, onStep?: (text: string)
   let account = await loadAccount(pk);
   if (!account) {
     onStep?.("Setting up your account…");
-    await api.fund(pk);
-    account = await loadAccount(pk);
-    if (!account) throw new Error("Account setup did not finish. Please try again.");
+    const id = chainlog.start("Creating your account on Stellar", `${pk.slice(0, 6)}…${pk.slice(-4)} · key made in this browser`);
+    try {
+      const r = await api.fund(pk);
+      account = await loadAccount(pk);
+      if (!account) throw new Error("Account setup did not finish. Please try again.");
+      chainlog.done(id, { title: "Account created on Stellar testnet", hash: r.hash });
+    } catch (e) {
+      chainlog.fail(id);
+      throw e;
+    }
   }
 
   let balance = usdcBalance(account, usdc.code, usdc.issuer);
@@ -75,14 +83,39 @@ export async function ensureReady(sendUsdcUnits: bigint, onStep?: (text: string)
       .setTimeout(60)
       .build();
     tx.sign(kp);
-    const res = await api.submit(tx.toXDR());
-    if (res.status !== "SUCCESS") throw new Error("Account setup did not finish. Please try again.");
+    const id = chainlog.start("Enabling digital dollars (USDC)", "you sign · RateRace pays the network fee");
+    const res = await api.submit(tx.toXDR()).catch((e) => {
+      chainlog.fail(id);
+      throw e;
+    });
+    if (res.status !== "SUCCESS") {
+      chainlog.fail(id);
+      throw new Error("Account setup did not finish. Please try again.");
+    }
+    chainlog.done(id, { title: "USDC enabled · fee sponsored", hash: res.hash, sponsored: true });
     balance = 0n;
   }
 
   if (balance < sendUsdcUnits) {
     onStep?.("Adding demo dollars to your account…");
-    await api.usdc(pk);
+    const id = chainlog.start("Adding 1,000 test dollars");
+    try {
+      const r = await api.usdc(pk);
+      chainlog.done(id, { title: "1,000 test USDC received", detail: "demo money from the test issuer", hash: r.hash });
+    } catch (e) {
+      chainlog.fail(id);
+      throw e;
+    }
   }
   return kp;
+}
+
+let usdcAsset: { code: string; issuer: string } | null = null;
+
+/** The demo account's USDC balance (USDC units), or 0 if the account doesn't exist yet. */
+export async function usdcBalanceUnits(): Promise<bigint> {
+  usdcAsset ??= (await api.health()).usdc;
+  const account = await loadAccount(demoKeypair().publicKey());
+  if (!account) return 0n;
+  return usdcBalance(account, usdcAsset.code, usdcAsset.issuer) ?? 0n;
 }
