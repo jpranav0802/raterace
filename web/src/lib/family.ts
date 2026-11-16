@@ -68,3 +68,23 @@ export async function sendFamilyAnswer(orderId: number, token: string, arrived: 
   });
   if (!res.ok) throw new Error("failed");
 }
+
+// ---------- the Receive page (no link needed) ----------
+// The recipient's phone computes the same fingerprint the sender put on-chain (sha256 of the
+// recipient's name and account) and asks for the latest transfer that carries it.
+
+export async function fetchReceiveView(recipientHash: string): Promise<FamilyView | "invalid"> {
+  const res = await fetch(`${config.indexerUrl}/receive/${recipientHash}`);
+  if (res.status === 404) return "invalid";
+  if (!res.ok) throw new Error("unreachable");
+  return (await res.json()) as FamilyView;
+}
+
+export async function sendReceiveAnswer(recipientHash: string, orderId: number, arrived: boolean): Promise<void> {
+  const res = await fetch(`${config.indexerUrl}/receive/${recipientHash}/answer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ orderId, arrived }),
+  });
+  if (!res.ok) throw new Error("failed");
+}

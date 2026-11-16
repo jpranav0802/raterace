@@ -1,7 +1,7 @@
 // The recipient's page, opened from the link the sender shares. No account, no wallet.
 // Shown in Spanish or English (the phone's language decides; there is a switch).
 import { corridorById, currencyOf, formatLocal, type FamilyView } from "@raterace/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { fetchFamilyView, sendFamilyAnswer } from "@/lib/family";
 const POLL_MS = 3000;
 const PROVIDER_NAMES: Record<string, string> = { alpha: "Alpha", beta: "Beta", gamma: "Gamma" };
 
-type Lang = "es" | "en";
+export type Lang = "es" | "en";
 
 const TEXT = {
   en: {
@@ -78,10 +78,35 @@ const TEXT = {
   },
 } as const;
 
+/** The family link: /f/<order id>#<secret>. */
 export default function Family() {
   const { id } = useParams();
   const orderId = Number(id);
   const [token] = useState(() => window.location.hash.replace(/^#/, ""));
+  const valid = Number.isInteger(orderId) && /^[0-9a-f]{32}$/.test(token);
+  const fetchView = useCallback(
+    () => (valid ? fetchFamilyView(orderId, token) : Promise.resolve("invalid" as const)),
+    [valid, orderId, token],
+  );
+  const sendAnswer = useCallback(
+    (_view: FamilyView, arrived: boolean) => sendFamilyAnswer(orderId, token, arrived),
+    [orderId, token],
+  );
+  return <RecipientScreen fetchView={fetchView} sendAnswer={sendAnswer} />;
+}
+
+interface RecipientScreenProps {
+  /** The transfer to show, or "invalid" when there is none. Polled every few seconds. */
+  fetchView: () => Promise<FamilyView | "invalid">;
+  sendAnswer: (view: FamilyView, arrived: boolean) => Promise<void>;
+  /** Shown instead of "this link is not valid" when there is no transfer (the Receive page waits). */
+  empty?: (lang: Lang) => ReactNode;
+  /** A line above the transfer, e.g. who this phone is receiving as. */
+  header?: (lang: Lang) => ReactNode;
+}
+
+/** What the recipient sees: progress, the demo bank alert, and "did it arrive?". No account, no wallet. */
+export function RecipientScreen({ fetchView, sendAnswer, empty, header }: RecipientScreenProps) {
   const [lang, setLang] = useState<Lang>(() => (navigator.language?.toLowerCase().startsWith("es") ? "es" : "en"));
   const [view, setView] = useState<FamilyView | null>(null);
   const [state, setState] = useState<"loading" | "invalid" | "offline" | "ok">("loading");
@@ -91,13 +116,10 @@ export default function Family() {
   const t = TEXT[lang];
 
   const load = useCallback(async () => {
-    if (!Number.isInteger(orderId) || !/^[0-9a-f]{32}$/.test(token)) {
-      setState("invalid");
-      return;
-    }
     try {
-      const v = await fetchFamilyView(orderId, token);
+      const v = await fetchView();
       if (v === "invalid") {
+        setView(null);
         setState("invalid");
         return;
       }
@@ -106,7 +128,7 @@ export default function Family() {
     } catch {
       setState((s) => (s === "loading" ? "loading" : "offline"));
     }
-  }, [orderId, token]);
+  }, [fetchView]);
 
   useEffect(() => {
     void load();
@@ -126,7 +148,7 @@ export default function Family() {
     setBusy(true);
     setFailed(false);
     try {
-      await sendFamilyAnswer(orderId, token, arrived);
+      if (view) await sendAnswer(view, arrived);
       await load();
     } catch {
       setFailed(true);
@@ -148,6 +170,8 @@ export default function Family() {
   let body;
   if (state === "loading" && !view) {
     body = <h1 className="text-[1.75rem]">{t.loading}</h1>;
+  } else if ((state === "invalid" || !view) && empty) {
+    body = empty(lang);
   } else if (state === "invalid" || !view) {
     body = (
       <>
@@ -242,6 +266,7 @@ export default function Family() {
         {langButton}
       </header>
       <main className="mx-auto w-full max-w-[30rem] flex-1 px-5 pt-6 pb-16">
+        {header?.(lang)}
         {body}
         {state === "offline" && <p className="mt-4 text-sm text-muted-foreground">{t.offline}</p>}
       </main>

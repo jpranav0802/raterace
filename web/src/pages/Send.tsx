@@ -138,6 +138,7 @@ export default function Send() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [market, setMarket] = useState<Market | null>(null);
+  const [testProviders] = useState(() => new URLSearchParams(window.location.search).get("providers") === "test");
 
   /** Switching country: its own contacts, an empty account field, its own market rate. */
   function setCorridor(c: Corridor) {
@@ -195,7 +196,9 @@ export default function Send() {
       const request: RfqRequestWithMode = {
         // Mexico: real Stellar anchors' names with simulated prices. Other countries: labelled
         // test providers. Either way each price is signed and bonded by a test anchor.
-        mode: "anchors",
+        // /send?providers=test asks the three test providers directly instead (Alpha, Beta and
+        // Gamma, which never pays): that is how the missed-deadline refund is demonstrated.
+        mode: testProviders ? undefined : "anchors",
         corridor: corridor.corridor,
         assetCode: corridor.currency,
         sendUsdc: units.toString(),

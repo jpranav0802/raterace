@@ -291,7 +291,7 @@ export default function Order() {
       {familyLink && order.status === "Open" && !missedDeadline && <ShareWithFamily url={familyLink} spanish={corridorById(order.corridor)?.spanish ?? true} />}
       {familyLink && order.status === "Paid" && !order.familyAnswer && (
         <p className="mt-3 text-sm text-muted-foreground">
-          Waiting for your family to say it arrived on their link. You can also confirm it yourself below.
+          Waiting for your family to say it arrived on their phone. You can also confirm it yourself below.
         </p>
       )}
 
