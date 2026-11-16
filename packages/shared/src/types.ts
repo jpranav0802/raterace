@@ -61,6 +61,9 @@ export interface OrderView {
   payoutDeadline: number;
   challengeEnds: number;
   payoutRef: string | null;
+  /** Set once the sender has been paid back: total returned and the penalty part of it (USDC units). */
+  refund?: string;
+  penalty?: string;
   txs: { event: string; hash: string; ledger: number; at: number }[];
 }
 
