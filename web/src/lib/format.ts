@@ -11,6 +11,9 @@ const MESSAGES: Record<number, string> = {
   23: "The market rate is unavailable. Try again in a minute.",
   24: "This offer is too far below the market rate.",
   25: "You reached your daily sending limit.",
+  31: "This transfer has already moved on. Refreshing…",
+  33: "The provider still has time to pay. Please wait for the deadline.",
+  35: "The time to report a problem has passed.",
 };
 
 export function errorMessage(code?: number): string {

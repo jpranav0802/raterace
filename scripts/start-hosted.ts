@@ -41,6 +41,9 @@ function start(name: string, dir: string, file: string) {
 start("anchors", "anchors", "src/index.ts");
 start("router", "router", "src/index.ts");
 start("keeper", "scripts", "oracle-keeper.ts");
+// Local development ("npm run dev:backend") also runs the indexer here. When hosted, the
+// indexer is its own service (see render.yaml), so it is not started twice.
+if (process.env.WITH_INDEXER === "1") start("indexer", "indexer", "src/index.ts");
 
 process.on("SIGINT", () => stopAll(0));
 process.on("SIGTERM", () => stopAll(0));

@@ -26,7 +26,7 @@
     "check": "npm run check -w @raterace/scripts",
     "try-quote": "npm run try-quote -w @raterace/scripts",
     "send": "npm run send -w @raterace/scripts --",
-    "dev:backend": "npm run start:hosted -w @raterace/scripts"
+    "dev:backend": "WITH_INDEXER=1 npm run start:hosted -w @raterace/scripts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
