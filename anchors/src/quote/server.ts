@@ -5,7 +5,7 @@
 // plugs in by serving the same endpoint.
 import cors from "cors";
 import express from "express";
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
 import {
   CORRIDOR_IDS,
   PORTS,
@@ -20,8 +20,9 @@ import {
   type QuoteJson,
 } from "@raterace/shared";
 import { makeClients, oraclePrice, quoteDigest, toContractQuote } from "@raterace/shared/chain";
-import { loadConfig, optionalEnv } from "@raterace/shared/node";
+import { loadConfig, loadDeployment, optionalEnv } from "@raterace/shared/node";
 import { PROFILES, type AnchorProfile } from "./config";
+import { renderStellarToml } from "./stellarToml";
 
 const MAX_QUOTE_LIFETIME_S = 300;
 /**
@@ -39,6 +40,15 @@ interface StandIn {
   spread_bps: number;
 }
 const BPS = 10_000n;
+
+/** This anchor's public base URL: ANCHOR_URLS in .env, else deployments/testnet.json, else localhost. */
+function publicUrl(name: AnchorProfile["name"], fromDeployment?: string): string {
+  for (const pair of optionalEnv("ANCHOR_URLS").split(",")) {
+    const [k, v] = pair.split("=");
+    if (k?.trim() === name && v) return v.trim();
+  }
+  return fromDeployment || `http://localhost:${PORTS[name]}`;
+}
 
 class QuoteError extends Error {
   constructor(
@@ -88,6 +98,27 @@ function startAnchor(profile: AnchorProfile) {
 
   app.get("/info", (_req, res) => {
     res.json(info);
+  });
+
+  // ---- SEP-1: how wallets and services discover an anchor ----
+  // .env values first; without a .env, the public deployments/testnet.json still works.
+  const deployment = loadDeployment();
+  const listed = deployment?.anchors.find((a) => a.name === profile.name);
+  const stellarToml = renderStellarToml({
+    displayName: profile.displayName,
+    networkPassphrase: cfg.networkPassphrase,
+    account: address || listed?.address,
+    signingKey: quoteKey
+      ? quoteKey.publicKey()
+      : listed?.signingKeyHex
+        ? StrKey.encodeEd25519PublicKey(Buffer.from(listed.signingKeyHex, "hex"))
+        : undefined,
+    quoteServer: publicUrl(profile.name, listed?.quoteUrl),
+    usdcIssuer: usdcIssuer || deployment?.usdc.issuer,
+  });
+  app.get("/.well-known/stellar.toml", (_req, res) => {
+    // SEP-1 requires CORS (set for every route by cors() above) and a plain-text body.
+    res.type("text/plain").send(stellarToml);
   });
 
   app.post("/quote", async (req, res) => {
