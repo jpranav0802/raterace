@@ -2,6 +2,20 @@
 
 Goal: anyone opens a link on their phone and completes a send. Testnet only, no real money.
 
+## Live now (deployed 16 Nov 2026)
+
+| Piece | Address |
+|---|---|
+| Web app (Vercel project `raterace`, root `web`) | https://raterace-jpranav0802s-projects.vercel.app |
+| Router + mock anchors + oracle keeper (Render) | https://raterace-router.onrender.com (`/health`) |
+| Indexer (Render) | https://raterace-indexer.onrender.com (`/health`) |
+
+Both hosts redeploy on every push to `main`. Render only holds the ten secrets; every public
+value the services need (contract IDs, account addresses, the deploy ledger) is read from the
+committed `deployments/testnet.json`, so a redeploy of the contracts only needs that file
+committed, the secrets updated if accounts changed, and `VITE_RATERACE_CONTRACT_ID` updated on Vercel.
+Vercel's login protection is switched off for this project so anyone with the link can open it.
+
 | Piece | Where | Why |
 |---|---|---|
 | Web app (`web/`) | Vercel (static) | Plain Vite build; only public `VITE_*` settings |
