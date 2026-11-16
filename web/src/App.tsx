@@ -9,6 +9,7 @@ import { usdcBalanceUnits } from "@/lib/wallet";
 import Activity from "./pages/Activity";
 import Admin from "./pages/Admin";
 import Design from "./pages/Design";
+import Family from "./pages/Family";
 import Leaderboard from "./pages/Leaderboard";
 import Order from "./pages/Order";
 import Quotes from "./pages/Quotes";
@@ -60,7 +61,7 @@ function Balance({ pathname }: { pathname: string }) {
   );
 }
 
-export default function App() {
+function SenderApp() {
   const { pathname } = useLocation();
   const showNetwork = networkView.use();
   const live = LIVE_ROUTES.test(pathname) && showNetwork;
@@ -135,4 +136,17 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+export default function App() {
+  // The recipient's page (the family link) is its own small world: no sender navigation.
+  const { pathname } = useLocation();
+  if (pathname.startsWith("/f/")) {
+    return (
+      <Routes>
+        <Route path="/f/:id" element={<Family />} />
+      </Routes>
+    );
+  }
+  return <SenderApp />;
 }

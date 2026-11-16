@@ -1,14 +1,16 @@
 // Order tracker (issue #19). Built from the components shown on /design.
 import { formatMxn, formatUsd, type OrderView } from "@raterace/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
 import { PageHeader } from "@/components/PageHeader";
+import { ShareWithFamily } from "@/components/ShareWithFamily";
 import { ProofLink } from "@/components/ProofLink";
 import { Steps, type Step } from "@/components/Steps";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { config } from "@/lib/config";
+import { ensureFamilyLink } from "@/lib/family";
 import { runOrderAction, type OrderAction } from "@/lib/orderActions";
 import { demoKeypair } from "@/lib/wallet";
 
@@ -181,6 +183,45 @@ export default function Order() {
     };
   }, [load]);
 
+  // The family link, created once for the sender's own order.
+  const [familyLink, setFamilyLink] = useState<string | null>(null);
+  const isMine = order?.sender === demoKeypair().publicKey();
+  const linkWanted = isMine && !familyLink && (order?.status === "Open" || order?.status === "Paid");
+  useEffect(() => {
+    if (!linkWanted) return;
+    let alive = true;
+    // The service may need a few seconds before it has seen a brand-new order: retry briefly.
+    (async () => {
+      for (let attempt = 0; alive && attempt < 10; attempt++) {
+        const url = await ensureFamilyLink(orderId).catch(() => null);
+        if (!alive) return;
+        if (url) {
+          setFamilyLink(url);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [linkWanted, orderId]);
+
+  // When the family answers on their link, the sender's wallet records it on-chain:
+  // "arrived" confirms the transfer, "not arrived" reports a problem.
+  const answered = useRef(false);
+  const familyAnswer = order?.familyAnswer;
+  const orderStatus = order?.status;
+  const challengeEnds = order?.challengeEnds ?? 0;
+  useEffect(() => {
+    if (!isMine || !familyAnswer || orderStatus !== "Paid" || answered.current) return;
+    if (!familyAnswer.arrived && Math.floor(Date.now() / 1000) > challengeEnds) return;
+    answered.current = true;
+    void act(familyAnswer.arrived ? "confirm" : "dispute");
+    // `act` is stable enough for this one-shot; rerunning on its identity would double-send.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMine, familyAnswer, orderStatus, challengeEnds]);
+
   async function act(action: OrderAction) {
     setBusy(action);
     setActionError(null);
@@ -238,6 +279,21 @@ export default function Order() {
       <Card>
         <Steps steps={buildSteps(order, provider, now)} />
       </Card>
+
+      {order.familyAnswer && order.status === "Paid" && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          {order.familyAnswer.arrived
+            ? "Your family says it arrived. Confirming…"
+            : "Your family says it has not arrived. Reporting the problem…"}
+        </p>
+      )}
+
+      {familyLink && order.status === "Open" && !missedDeadline && <ShareWithFamily url={familyLink} />}
+      {familyLink && order.status === "Paid" && !order.familyAnswer && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          Waiting for your family to say it arrived on their link. You can also confirm it yourself below.
+        </p>
+      )}
 
       {mine && (missedDeadline || order.status === "Paid") && (
         <div className="mt-5 flex flex-col gap-2">
