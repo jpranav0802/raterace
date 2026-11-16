@@ -5,6 +5,14 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { fetchFamilyView, sendFamilyAnswer } from "@/lib/family";
 
 const POLL_MS = 3000;
@@ -42,6 +50,18 @@ const TEXT = {
     cancelled: "This transfer was cancelled",
     cancelledBody: "The sender got all the money back and can send again.",
     tryAgain: "That didn't go through. Please try again.",
+    confirmTitle: "Report that the money hasn't arrived?",
+    confirmCheck: "First check your bank app. SPEI deposits usually show up within minutes.",
+    confirmWhat: "If you report it, this is what happens:",
+    confirmSteps: (p: string) => [
+      "We tell the sender, and a dispute is raised on this transfer.",
+      `The money and ${p}'s deposit stay frozen while the dispute is reviewed.`,
+      `${p} is asked for its bank receipt. If it shows the money reached your account, the dispute is closed and ${p} keeps the payment.`,
+      `If ${p} can't prove it paid, the sender gets all the money back plus a penalty.`,
+    ],
+    confirmWarn: "Only report this if the money really hasn't arrived. Reporting a payment you received is fraud.",
+    confirmCancel: "Go back",
+    confirmGo: "Yes, report a problem",
     footer: "Demo on the Stellar test network. No real money moves.",
   },
   es: {
@@ -74,6 +94,18 @@ const TEXT = {
     cancelled: "Este envío se canceló",
     cancelledBody: "Quien envía recuperó todo el dinero y puede enviarlo de nuevo.",
     tryAgain: "No se pudo enviar. Inténtalo de nuevo.",
+    confirmTitle: "¿Reportar que el dinero no ha llegado?",
+    confirmCheck: "Primero revisa la app de tu banco. Los depósitos por SPEI suelen aparecer en unos minutos.",
+    confirmWhat: "Si lo reportas, esto es lo que pasa:",
+    confirmSteps: (p: string) => [
+      "Avisamos a quien envió y se abre una disputa sobre este envío.",
+      `El dinero y el depósito de ${p} quedan congelados mientras se revisa la disputa.`,
+      `Se le pide a ${p} su comprobante bancario. Si muestra que el dinero llegó a tu cuenta, la disputa se cierra y ${p} conserva el pago.`,
+      `Si ${p} no puede demostrar que pagó, quien envía recupera todo el dinero más una penalización.`,
+    ],
+    confirmWarn: "Repórtalo solo si el dinero de verdad no ha llegado. Reportar un pago que sí recibiste es fraude.",
+    confirmCancel: "Regresar",
+    confirmGo: "Sí, reportar un problema",
     footer: "Demostración en la red de pruebas de Stellar. No se mueve dinero real.",
   },
 } as const;
@@ -113,6 +145,7 @@ export function RecipientScreen({ fetchView, sendAnswer, empty, header }: Recipi
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [confirmNo, setConfirmNo] = useState(false);
   const t = TEXT[lang];
 
   const load = useCallback(async () => {
@@ -214,10 +247,42 @@ export function RecipientScreen({ fetchView, sendAnswer, empty, header }: Recipi
             <Button size="lg" disabled={busy} onClick={() => answer(true)}>
               {busy ? t.sending : t.yes}
             </Button>
-            <Button size="lg" variant="destructive" disabled={busy} onClick={() => answer(false)}>
+            <Button size="lg" variant="destructive" disabled={busy} onClick={() => setConfirmNo(true)}>
               {t.no}
             </Button>
           </div>
+          <Dialog open={confirmNo} onOpenChange={setConfirmNo}>
+            <DialogContent className="max-w-[26rem]">
+              <DialogHeader>
+                <DialogTitle>{t.confirmTitle}</DialogTitle>
+                <DialogDescription>{t.confirmCheck}</DialogDescription>
+              </DialogHeader>
+              <div className="text-sm">
+                <p className="font-medium">{t.confirmWhat}</p>
+                <ol className="mt-2 flex list-decimal flex-col gap-1.5 pl-5 text-muted-foreground">
+                  {t.confirmSteps(provider).map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+                <p className="mt-3 rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-bad">{t.confirmWarn}</p>
+              </div>
+              <DialogFooter className="gap-2 sm:gap-2">
+                <Button variant="outline" onClick={() => setConfirmNo(false)}>
+                  {t.confirmCancel}
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmNo(false);
+                    void answer(false);
+                  }}
+                >
+                  {t.confirmGo}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           {failed && (
             <p role="alert" className="mt-3 text-sm text-bad">
               {t.tryAgain}
