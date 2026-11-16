@@ -14,19 +14,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust + the Soroban wasm target
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32v1-none
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
+      # Compiles every contract and runs all unit tests on a simulated ledger.
+      # (The deployable .wasm is built with `stellar contract build`; soroban-sdk 28
+      # refuses a plain `cargo build` to wasm, so that stays a local/deploy step.)
       - name: Run all contract tests
         run: cargo test --workspace
-
-      - name: Check the contracts compile to wasm
-        run: cargo build --workspace --target wasm32v1-none --release
 
   typecheck:
     name: TypeScript typecheck
