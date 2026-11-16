@@ -9,8 +9,11 @@
 // currency it re-stamps the current price so orders keep working.
 //   ORACLE_SOURCE=hold   keep whatever prices are set (e.g. one set from /admin), only re-stamp
 //
-// It leaves a price older than 30 minutes alone: that is the deliberate "make price stale"
-// demo. On start it always refreshes, so a host that slept recovers by itself.
+// A price that someone deliberately made stale (the "make price stale" demo: /admin or
+// `npm run demo:rejections`) is left alone. That is recognised by the keeper having updated
+// the price itself within the last 10 minutes and the price suddenly being over 30 minutes
+// old. A price that is old because this computer or host was asleep is refreshed as soon as
+// the keeper runs again, and on start it always refreshes.
 import { contract, Keypair } from "@stellar/stellar-sdk";
 import { CORRIDORS, ORACLE_DECIMALS, fallbackOraclePrice, type CorridorInfo } from "@raterace/shared";
 import { OracleClient, oraclePrice } from "@raterace/shared/chain";
@@ -26,6 +29,8 @@ const mxnFallback = BigInt(requireEnv("MOCK_MXN_USD_PRICE"));
 const EVERY_S = Number(optionalEnv("ORACLE_KEEPER_EVERY_S", "240"));
 const LIVE = optionalEnv("ORACLE_SOURCE", "live") !== "hold";
 const LEAVE_ALONE_AFTER_S = 1800;
+/** When this keeper last wrote each currency's price (unix seconds, this process only). */
+const lastWrite = new Map<string, number>();
 
 const oracle = new OracleClient({
   rpcUrl: cfg.rpcUrl,
@@ -88,7 +93,8 @@ async function refresh(c: CorridorInfo, force: boolean, tables: Parameters<typeo
   const current = await oraclePrice(oracle, c.currency);
   const age = current ? now - current.timestamp : Infinity;
   if (!force && age < EVERY_S) return;
-  if (!force && age > LEAVE_ALONE_AFTER_S && age !== Infinity) {
+  const wroteRecently = now - (lastWrite.get(c.currency) ?? 0) < 600;
+  if (!force && age > LEAVE_ALONE_AFTER_S && age !== Infinity && wroteRecently) {
     console.log(`${c.currency} price is ${age}s old: looks like the stale-price demo, leaving it`);
     return;
   }
@@ -97,6 +103,7 @@ async function refresh(c: CorridorInfo, force: boolean, tables: Parameters<typeo
   const price = live ? toOraclePrice(live.rate) : (current?.price ?? fallback);
   const tx = await oracle.set_price({ asset: { tag: "Other", values: [c.currency] }, price });
   await tx.signAndSend();
+  lastWrite.set(c.currency, Math.floor(Date.now() / 1000));
   console.log(
     `${new Date().toISOString()} ${c.currency} price set to ${price}` +
       (live ? ` (1 USD = ${live.rate} ${c.currency}, ${live.source})` : " (re-stamped, no live source)") +

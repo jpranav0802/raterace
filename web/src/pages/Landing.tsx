@@ -1,19 +1,31 @@
 // The front door. Explains RateRace in one scroll and sends people into the app.
 // Every number here is either read live from the chain (market rates), a contract setting,
 // or a sourced figure with its source shown. The race at the top is an illustration and says so.
-import { CORRIDORS, corridorByCurrency, explorerContract, fallbackOraclePrice, localPerUsd } from "@raterace/shared";
+import {
+  CORRIDORS,
+  corridorByCurrency,
+  explorerContract,
+  fallbackOraclePrice,
+  formatBps,
+  formatLocal,
+  localPerUsd,
+  marketLocal,
+  toUnits,
+  type CorridorInfo,
+} from "@raterace/shared";
 import { ArrowRight, ArrowUpRight, Check, FileSignature, Fuel, Lock, Scale, ShieldCheck, Trophy, Undo2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Flag } from "@/components/Flag";
 import { LogoMark, Wordmark } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { api } from "@/lib/api";
+import { api, type RfqWithAudit } from "@/lib/api";
 import { config } from "@/lib/config";
 import { bouncy, popIn, stagger } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { demoKeypair } from "@/lib/wallet";
 
 const SEND_USD = 200;
 /** The rule the contract enforces: no offer more than 3% below the market rate. */
@@ -182,11 +194,212 @@ function HeroRace({ rates }: { rates: Rates }) {
   );
 }
 
+// ---------- the live auction (real) ----------
+// Runs the same request the app sends: the router asks every provider for a signed offer,
+// checks each signature against the provider's key stored on-chain, and measures each offer
+// against the oracle's market rate. Nothing is locked and no money moves.
+
+type Auction =
+  | { phase: "loading" }
+  | { phase: "done"; rfq: RfqWithAudit; ms: number }
+  /** The router can't be reached: the page falls back to the illustration. */
+  | { phase: "offline" };
+
+function LiveAuction({ rates }: { rates: Rates }) {
+  const reduce = useReducedMotion();
+  const [corridor, setCorridor] = useState<CorridorInfo>(CORRIDORS[0]);
+  const [state, setState] = useState<Auction>({ phase: "loading" });
+  const [run, setRun] = useState(0);
+  const latest = useRef(0);
+
+  const start = useCallback((c: CorridorInfo) => {
+    const id = ++latest.current;
+    setCorridor(c);
+    setState({ phase: "loading" });
+    const t0 = performance.now();
+    api
+      .rfq({
+        mode: "anchors",
+        corridor: c.id,
+        assetCode: c.currency,
+        sendUsdc: toUnits(String(SEND_USD)).toString(),
+        sender: demoKeypair().publicKey(),
+        recipientCountry: c.country.toUpperCase(),
+        method: c.method,
+      })
+      .then((rfq) => {
+        if (id !== latest.current) return;
+        setState(rfq.quotes.length ? { phase: "done", rfq, ms: Math.round(performance.now() - t0) } : { phase: "offline" });
+        setRun((r) => r + 1);
+      })
+      .catch(() => id === latest.current && setState({ phase: "offline" }));
+  }, []);
+
+  useEffect(() => {
+    start(CORRIDORS[0]);
+  }, [start]);
+
+  if (state.phase === "offline") return <HeroRace rates={rates} />;
+
+  const rfq = state.phase === "done" ? state.rfq : null;
+  const best = rfq?.quotes[0];
+  const market = rfq ? marketLocal(BigInt(rfq.quotes[0].sendUsdc), BigInt(rfq.oracle.price)) : null;
+  const verified = rfq?.audit?.filter((a) => a.outcome === "verified").length ?? rfq?.quotes.length ?? 0;
+
+  return (
+    <Card className="relative overflow-hidden p-0">
+      <div className="flex items-center justify-between gap-3 border-b px-5 py-3.5">
+        <span className="flex min-w-0 items-center gap-2.5 text-sm">
+          <Flag country={corridor.country} />
+          <span className="truncate">
+            <span className="money font-medium">${SEND_USD}</span> to {corridor.countryName}
+          </span>
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-good/40 px-2 py-0.5 text-[0.7rem] text-good">
+          <span className="relative flex size-1.5">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-70 motion-reduce:hidden" />
+            <span className="relative inline-flex size-1.5 rounded-full bg-good" />
+          </span>
+          Live on Stellar testnet
+        </span>
+      </div>
+
+      {/* Pick a country: each tap runs a new auction. */}
+      <div className="flex gap-1.5 overflow-x-auto border-b px-5 py-2.5 [scrollbar-width:none]" role="radiogroup" aria-label="Country">
+        {CORRIDORS.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            role="radio"
+            aria-checked={c.id === corridor.id}
+            aria-label={c.countryName}
+            title={c.countryName}
+            onClick={() => start(c)}
+            className={cn(
+              "shrink-0 rounded-full p-0.5 ring-2 transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5",
+              c.id === corridor.id ? "ring-brand" : "ring-transparent opacity-60 hover:opacity-100",
+            )}
+          >
+            <Flag country={c.country} className="size-7" />
+          </button>
+        ))}
+      </div>
+
+      <div className="relative min-h-[17.5rem] px-5 pt-7 pb-5">
+        <div className="pointer-events-none absolute top-2 right-5 bottom-5 left-5" aria-hidden="true">
+          <div className="absolute inset-y-0 right-0 border-r-2 border-dashed border-foreground/50">
+            <span className="absolute -top-0.5 right-1.5 text-[0.65rem] whitespace-nowrap text-foreground/70">
+              market rate{market !== null ? ` ${formatLocal(market, corridor.currency)}` : ""}
+            </span>
+          </div>
+        </div>
+
+        {rfq ? (
+          <ol className="relative flex flex-col gap-2 pt-4">
+            {rfq.quotes.slice(0, 5).map((q, i) => {
+              const winner = q === best;
+              return (
+                <li key={`${run}-${q.anchorName}`} className="relative h-10">
+                  <motion.div
+                    initial={reduce ? false : { width: "8%" }}
+                    animate={{ width: `${trackPos(q.markupBps) * 100}%` }}
+                    transition={reduce ? { duration: 0 } : { duration: 1.3, delay: 0.1 + i * 0.1, ease: [0.2, 0.8, 0.2, 1] }}
+                    className={cn(
+                      "absolute inset-y-0 left-0 flex items-center justify-between gap-2 overflow-hidden rounded-lg border px-3",
+                      winner ? "border-good/60 bg-good/15" : "bg-secondary/70",
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5 text-sm">
+                      {winner && <Trophy className="size-3.5 shrink-0 text-good" />}
+                      <span className={cn("truncate", winner && "font-semibold text-good")}>{q.displayName}</span>
+                    </span>
+                    <motion.span
+                      initial={reduce ? false : { opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: reduce ? 0 : 1.2 + i * 0.1 }}
+                      className={cn("money shrink-0 text-sm", winner ? "font-semibold text-good" : "text-muted-foreground")}
+                    >
+                      {formatLocal(q.landedLocal, corridor.currency)}
+                    </motion.span>
+                  </motion.div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <ol className="relative flex flex-col gap-2 pt-4" aria-label="Asking providers for signed offers">
+            {[0.82, 0.76, 0.7, 0.64, 0.5].map((w, i) => (
+              <li key={i} className="h-10">
+                <div
+                  className="h-full animate-pulse rounded-lg border bg-secondary/50"
+                  style={{ width: `${w * 100}%`, animationDelay: `${i * 120}ms` }}
+                />
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t bg-secondary/30 px-5 py-3 text-xs text-muted-foreground">
+        {rfq && best ? (
+          <>
+            <span>
+              <span className="text-foreground">
+                {verified} signed offers checked against on-chain keys in {(state.phase === "done" ? state.ms / 1000 : 0).toFixed(1)} s
+              </span>
+              . Best is {best.markupBps < 0 ? "above the market rate" : `${formatBps(best.markupBps)} below the market rate`}.{" "}
+              {corridor.id === "MX_SPEI"
+                ? "Real anchor names with simulated prices, not quotes from these companies; signed by our test anchors."
+                : "Test providers, simulated prices."}
+            </span>
+            <span className="flex gap-3">
+              <button type="button" onClick={() => start(corridor)} className="underline underline-offset-2 hover:text-foreground">
+                Run again
+              </button>
+              <Link to="/send" className="inline-flex items-center gap-0.5 text-brand">
+                Send for real <ArrowRight className="size-3" />
+              </Link>
+            </span>
+          </>
+        ) : (
+          <span>Asking providers for signed offers…</span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ---------- live rate ticker ----------
+
+function RateTicker({ rates }: { rates: Rates }) {
+  const items = CORRIDORS.filter((c) => rates[c.currency]);
+  if (items.length < 3) return null;
+  const row = (hidden: boolean) => (
+    <ul className="flex shrink-0 animate-[ticker_38s_linear_infinite] items-center gap-8 pr-8 motion-reduce:animate-none" aria-hidden={hidden}>
+      {items.map((c) => (
+        <li key={c.id} className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground">
+          <Flag country={c.country} className="size-4" />
+          <span>USD to {c.currency}</span>
+          <span className="money text-foreground">{rates[c.currency].toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <div className="overflow-hidden bg-secondary/30 py-2" aria-label="Live market rates from the on-chain oracle">
+      <div className="flex w-max">
+        {row(false)}
+        {row(true)}
+      </div>
+    </div>
+  );
+}
+
 // ---------- page sections ----------
 
 function Section({ id, title, lead, children }: { id?: string; title: string; lead?: string; children: React.ReactNode }) {
   return (
-    <section id={id} className="scroll-mt-20 border-t py-16 sm:py-20">
+    <section id={id} className="scroll-mt-20 py-14 sm:py-20">
       <div className="mx-auto w-full max-w-[64rem] px-5">
         <motion.div initial="hidden" whileInView="show" viewport={{ once: true, margin: "-80px" }} variants={stagger(0.08)}>
           <motion.h2 variants={popIn} className="max-w-[22ch] origin-left text-[1.9rem] sm:text-[2.4rem]">
@@ -279,9 +492,20 @@ export default function Landing() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
+      <header className="sticky top-0 z-20 bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-[64rem] items-center justify-between gap-4 px-5">
-          <Link to="/" className="flex items-center gap-2.5" aria-label="RateRace home">
+          <Link
+            to="/"
+            // Already on this page: the logo takes you back to the top.
+            onClick={(e) => {
+              e.preventDefault();
+              // Drop a section anchor (/#stellar) from the address without reloading.
+              if (window.location.hash) window.history.replaceState(null, "", "/");
+              window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+            }}
+            className="flex items-center gap-2.5"
+            aria-label="RateRace home, back to top"
+          >
             <LogoMark />
             <Wordmark className="text-[1.15rem]" />
           </Link>
@@ -306,15 +530,16 @@ export default function Landing() {
       </header>
 
       <main className="flex-1">
+        <RateTicker rates={rates} />
         {/* ---- hero ---- */}
-        <section className="mx-auto grid w-full max-w-[64rem] gap-10 px-5 pt-12 pb-16 sm:pt-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] lg:items-center lg:gap-14 lg:pb-24">
+        <section className="mx-auto grid w-full max-w-[64rem] grid-cols-[minmax(0,1fr)] gap-10 px-5 pt-10 pb-16 sm:pt-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] lg:items-center lg:gap-14 lg:pb-24">
           <motion.div initial={reduce ? false : "hidden"} animate="show" variants={stagger(0.09, 0.05)}>
             <motion.h1 variants={popIn} className="origin-left text-[2.6rem] leading-[1.02] sm:text-[3.6rem]">
               Make them race for your family's money.
             </motion.h1>
             <motion.p variants={popIn} className="mt-5 max-w-[46ch] origin-left text-lg text-muted-foreground">
               Every transfer becomes a live auction. Providers bid to deliver the most money to your family, and the best
-              offer wins.
+              offer wins. The one on this page is running right now.
             </motion.p>
             <motion.div variants={popIn} className="mt-8 flex origin-left flex-col gap-3 sm:flex-row">
               <Button asChild size="lg" variant="brand" className="sm:w-auto">
@@ -323,7 +548,7 @@ export default function Landing() {
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline" className="sm:w-auto">
-                <a href="#how">See how it works</a>
+                <Link to="/receive">Receive money</Link>
               </Button>
             </motion.div>
             <motion.p variants={popIn} className="mt-5 origin-left text-xs text-muted-foreground">
@@ -336,7 +561,7 @@ export default function Landing() {
             animate={{ opacity: 1, y: 0, scale: 1, rotate: 0 }}
             transition={{ type: "spring", stiffness: 260, damping: 18, delay: 0.25 }}
           >
-            <HeroRace rates={rates} />
+            <LiveAuction rates={rates} />
           </motion.div>
         </section>
 
@@ -534,7 +759,7 @@ export default function Landing() {
         </Section>
 
         {/* ---- closing ---- */}
-        <section className="border-t py-20">
+        <section className="pt-14 pb-24 sm:pt-20 sm:pb-32">
           <motion.div
             initial="hidden"
             whileInView="show"

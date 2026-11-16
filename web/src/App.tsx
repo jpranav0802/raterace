@@ -16,6 +16,7 @@ import Landing from "./pages/Landing";
 import Leaderboard from "./pages/Leaderboard";
 import Order from "./pages/Order";
 import Quotes from "./pages/Quotes";
+import Receive from "./pages/Receive";
 import Send from "./pages/Send";
 
 const navLink = ({ isActive }: { isActive: boolean }) =>
@@ -81,6 +82,9 @@ function SenderApp() {
             </NavLink>
             <NavLink to="/activity" className={navLink}>
               Activity
+            </NavLink>
+            <NavLink to="/receive" className={navLink}>
+              Receive
             </NavLink>
             <NavLink to="/leaderboard" className={(state) => cn(navLink(state), "hidden sm:inline-flex")}>
               Providers
@@ -156,6 +160,8 @@ export default function App() {
       </Routes>
     );
   }
+  // The recipient's own side of the app: no sender navigation either.
+  if (pathname === "/receive") return <Receive />;
   // The landing page has its own full-width layout.
   if (pathname === "/") return <Landing />;
   return <SenderApp />;

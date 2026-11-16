@@ -68,6 +68,31 @@ function saveFamily() {
   }
 }
 const sha256Hex = (text: string) => createHash("sha256").update(text).digest("hex");
+
+// ---------- the Receive page ----------
+// The recipient can also find a transfer without any link: every order stores a fingerprint
+// of the recipient's details on-chain (sha256 of their name and account). The Receive page
+// computes the same fingerprint on the recipient's phone and asks for the latest transfer
+// that carries it. Knowing someone's exact name and account is the only check here: fine
+// for a testnet demo, but a real service would verify the recipient (for example by a code
+// sent to their phone) before showing or accepting anything.
+const recipientHashes = new Map<number, string>();
+/** Reads an order's recipient fingerprint from the contract. Set once the chain client exists. */
+let readRecipientHash: ((id: number) => Promise<string | null>) | null = null;
+async function recipientHashOf(id: number): Promise<string | null> {
+  const known = recipientHashes.get(id);
+  if (known) return known;
+  if (!readRecipientHash) return null;
+  try {
+    const h = await readRecipientHash(id);
+    if (h) recipientHashes.set(id, h);
+    return h;
+  } catch {
+    return null;
+  }
+}
+/** A finished transfer stays on the Receive page this long, then the page goes back to waiting. */
+const RECEIVE_KEEP_FINISHED_S = 600;
 /** The message the sender signs to prove the family link is theirs. */
 export const familyLinkMessage = (orderId: number, tokenHash: string) =>
   Buffer.from(`raterace-family-link:${orderId}:${tokenHash}`);
@@ -100,6 +125,7 @@ function apply(ev: ContractEvent) {
       payoutRef: null,
       txs: [],
     });
+    void recipientHashOf(id);
   }
   const order = orders.get(id);
   if (!order) return;
@@ -188,6 +214,11 @@ async function main() {
       return;
     }
     const existing = family.get(id);
+    // An entry with no link yet (the recipient answered on the Receive page first) gets its link now.
+    if (existing && existing.tokenHash === "") {
+      existing.tokenHash = tokenHash;
+      saveFamily();
+    }
     if (existing && existing.tokenHash !== tokenHash) {
       res.status(409).json({ error: "A link already exists for this transfer." });
       return;
@@ -252,6 +283,70 @@ async function main() {
     res.json({ ok: true, answer: link.answer });
   });
 
+  // ---- Receive page: the latest transfer addressed to a recipient fingerprint ----
+  const latestFor = async (hash: string): Promise<OrderView | null> => {
+    const recent = [...orders.values()].sort((a, b) => b.id - a.id).slice(0, 40);
+    for (const o of recent) {
+      if ((await recipientHashOf(o.id)) !== hash) continue;
+      const finished = ["Settled", "Refunded", "Slashed"].includes(o.status);
+      const lastAt = o.txs.length ? o.txs[o.txs.length - 1].at : o.openedAt;
+      if (finished && Math.floor(Date.now() / 1000) - lastAt > RECEIVE_KEEP_FINISHED_S) return null;
+      return o;
+    }
+    return null;
+  };
+  const validHash = (h: unknown): h is string => typeof h === "string" && /^[0-9a-f]{64}$/.test(h);
+
+  app.get("/receive/:hash", async (req, res) => {
+    if (!validHash(req.params.hash)) {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    const order = await latestFor(req.params.hash);
+    if (!order) {
+      res.status(404).json({ error: "Nothing on its way yet." });
+      return;
+    }
+    const view: FamilyView = {
+      id: order.id,
+      status: order.status,
+      landedLocal: order.landedLocal,
+      corridor: order.corridor,
+      anchorName: order.anchorName,
+      payoutDeadline: order.payoutDeadline,
+      challengeEnds: order.challengeEnds,
+      paidAt: order.txs.find((t) => t.event === "paid")?.at ?? 0,
+      answer: family.get(order.id)?.answer ?? null,
+    };
+    res.json(view);
+  });
+
+  // Recipient answers "did it arrive?" from the Receive page. Body: { orderId, arrived }.
+  app.post("/receive/:hash/answer", async (req, res) => {
+    const { orderId, arrived } = (req.body ?? {}) as { orderId?: number; arrived?: boolean };
+    const order = typeof orderId === "number" ? orders.get(orderId) : undefined;
+    if (!validHash(req.params.hash) || !order || typeof arrived !== "boolean") {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    if ((await recipientHashOf(order.id)) !== req.params.hash) {
+      res.status(404).json({ error: "This transfer is not addressed to you." });
+      return;
+    }
+    if (order.status !== "Paid") {
+      res.status(409).json({ error: "This transfer is not waiting for an answer." });
+      return;
+    }
+    // Same store as the family link, so the sender's app picks the answer up the same way.
+    const link = family.get(order.id) ?? { contractId: cfg.rateraceContractId, tokenHash: "", answer: null };
+    if (!link.answer) {
+      link.answer = { arrived, at: Math.floor(Date.now() / 1000) };
+      family.set(order.id, link);
+      saveFamily();
+    }
+    res.json({ ok: true, answer: link.answer });
+  });
+
   app.get("/orders", (req, res) => {
     const sender = typeof req.query.sender === "string" ? req.query.sender : undefined;
     const list = [...orders.values()]
@@ -280,6 +375,11 @@ async function main() {
     oracleContractId: cfg.oracleContractId,
     simulationAccount: deployment.accounts.sponsor,
   });
+
+  readRecipientHash = async (id) => {
+    const order = (await raterace.get_order({ order_id: BigInt(id) })).result.unwrap();
+    return bytesToHex(Uint8Array.from(order.recipient_hash));
+  };
 
   /** Bond and track record live in contract storage, so read them from the contract. */
   async function refreshLeaderboard() {
