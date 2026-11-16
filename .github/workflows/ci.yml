@@ -1,0 +1,45 @@
+# Runs on every pull request and every push to main.
+# Judges opening the repo see a green check next to each commit.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contracts:
+    name: Contract tests (Rust / Soroban)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      # Compiles every contract and runs all unit tests on a simulated ledger.
+      # (The deployable .wasm is built with `stellar contract build`; soroban-sdk 28
+      # refuses a plain `cargo build` to wasm, so that stays a local/deploy step.)
+      - name: Run all contract tests
+        run: cargo test --workspace
+
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Typecheck every workspace
+        run: npm run typecheck
