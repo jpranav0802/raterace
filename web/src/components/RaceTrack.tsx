@@ -6,9 +6,10 @@
 // is signed and bonded on testnet by a test provider standing in (shown on the lane).
 // Simulated mode: the bidders are the test providers with their own prices.
 import { formatBps, formatMxn, type RankedQuote } from "@raterace/shared";
-import { Check, RotateCcw, ShieldCheck } from "lucide-react";
+import { Check, RotateCcw, ShieldCheck, Trophy } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
+import { Confetti } from "@/components/Confetti";
 import { Badge } from "@/components/ui/badge";
 import type { AuditRow } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -128,7 +129,8 @@ function LaneRow({
   return (
     <motion.button
       layout={!reduce}
-      transition={{ layout: { type: "spring", stiffness: 260, damping: 30 } }}
+      transition={{ layout: { type: "spring", stiffness: 320, damping: 17 } }}
+      whileTap={valid ? { scale: 0.98 } : undefined}
       type="button"
       role="radio"
       aria-checked={selected}
@@ -163,23 +165,37 @@ function LaneRow({
           {live?.type === "bank" && <span className="text-[0.7rem] text-muted-foreground">bank</span>}
           {sim && <span className="text-[0.7rem] text-muted-foreground">{sim.note}</span>}
           {winner && (
-            <motion.span initial={reduce ? false : { scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+            <motion.span
+              className="inline-flex items-center gap-1"
+              initial={reduce ? false : { scale: 0, rotate: -40, opacity: 0 }}
+              animate={{ scale: 1, rotate: 0, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 600, damping: 10 }}
+            >
+              <motion.span
+                animate={reduce ? undefined : { rotate: [0, -16, 14, -8, 0], y: [0, -4, 0] }}
+                transition={{ duration: 0.7, delay: 0.25 }}
+                className="inline-flex"
+              >
+                <Trophy className="size-4 text-[#ffd23f]" />
+              </motion.span>
               <Badge variant="good" className="whitespace-nowrap">
                 Best offer
               </Badge>
             </motion.span>
           )}
         </span>
-        <span
+        <motion.span
+          animate={winner && !reduce ? { scale: [1, 1.22, 0.94, 1.04, 1] } : { scale: 1 }}
+          transition={{ duration: 0.6 }}
           className={cn(
-            "money shrink-0 text-lg font-semibold tracking-tight transition-colors duration-500 sm:text-xl",
+            "money shrink-0 origin-right text-lg font-semibold tracking-tight transition-colors duration-500 sm:text-xl",
             winner && "text-good",
             !valid && beyondLimit && "text-base font-medium text-muted-foreground sm:text-lg",
             !valid && !beyondLimit && "text-base font-medium text-bad/80 line-through decoration-1 sm:text-lg",
           )}
         >
           {amount}
-        </span>
+        </motion.span>
       </div>
 
       <div className="relative mt-2.5 ml-8">
@@ -192,11 +208,15 @@ function LaneRow({
             )}
             initial={reduce ? false : { width: "0%" }}
             animate={{ width: `${pos * 100}%` }}
-            transition={{ duration: RUN_MS / 1000, ease: [0.16, 1, 0.3, 1], delay: delay / 1000 }}
+            transition={{ type: "spring", stiffness: 70, damping: 10, delay: delay / 1000 }}
           >
-            <span
+            <span className="absolute top-1/2 -right-1.5 -translate-y-1/2">
+            <motion.span
+              key={runKey}
+              animate={reduce ? undefined : { scaleX: [1, 1.7, 0.8, 1.12, 1], scaleY: [1, 0.55, 1.25, 0.94, 1] }}
+              transition={{ duration: 0.5, delay: (delay + RUN_MS * 0.55) / 1000 }}
               className={cn(
-                "absolute top-1/2 -right-1.5 size-3 -translate-y-1/2 rounded-full",
+                "block size-3 rounded-full",
                 beyondLimit
                   ? "bg-muted-foreground"
                   : !valid
@@ -206,6 +226,7 @@ function LaneRow({
                     : "bg-foreground shadow-[0_0_12px_2px] shadow-foreground/40",
               )}
             />
+            </span>
           </motion.div>
         </div>
         <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-[0.76rem] text-muted-foreground">
@@ -335,6 +356,8 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
         )}
       </div>
 
+      <div className="relative">
+      <Confetti fire={finished && !reduce ? `${raceId}-${runKey}` : 0} count={36} spread={220} />
       <div role="radiogroup" aria-label="Offers, best first" className="divide-y overflow-hidden rounded-xl border bg-card">
         {ordered.map((lane) => (
           <LaneRow
@@ -350,6 +373,7 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
             limitBps={limitBps}
           />
         ))}
+      </div>
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-baseline justify-between gap-2 text-[0.8rem] text-muted-foreground">

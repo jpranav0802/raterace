@@ -1,6 +1,7 @@
 import { formatUsd } from "@raterace/shared";
 import { Radio } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { LogoMark, Wordmark } from "@/components/Logo";
 import { OnStellarPanel, OnStellarSheet } from "@/components/OnStellar";
@@ -57,7 +58,9 @@ function Balance({ pathname }: { pathname: string }) {
 }
 
 export default function App() {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
+  const reduce = useReducedMotion();
   const showNetwork = networkView.use();
   const live = LIVE_ROUTES.test(pathname) && showNetwork;
   // Each screen starts at the top (the router keeps the old scroll position otherwise).
@@ -107,7 +110,14 @@ export default function App() {
         )}
       >
         <main className="min-w-0">
-          <Routes>
+          <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={pathname}
+            initial={reduce ? false : { opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 420, damping: 24 } }}
+            exit={reduce ? undefined : { opacity: 0, y: -10, scale: 0.98, transition: { duration: 0.12 } }}
+          >
+          <Routes location={location}>
             <Route path="/" element={<Navigate to="/send" replace />} />
             <Route path="/send" element={<Send />} />
             <Route path="/quotes" element={<Quotes />} />
@@ -118,6 +128,8 @@ export default function App() {
             <Route path="/design" element={<Design />} />
             <Route path="*" element={<Navigate to="/send" replace />} />
           </Routes>
+          </motion.div>
+          </AnimatePresence>
         </main>
         {live && <OnStellarPanel />}
       </div>

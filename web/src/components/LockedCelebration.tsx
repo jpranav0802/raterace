@@ -3,6 +3,7 @@
 import { formatMxn, fromUnits } from "@raterace/shared";
 import { motion, useReducedMotion } from "motion/react";
 import { Link } from "react-router-dom";
+import { Confetti } from "@/components/Confetti";
 import { Countdown } from "@/components/Countdown";
 import { ProofLink } from "@/components/ProofLink";
 import { Button } from "@/components/ui/button";
@@ -29,9 +30,10 @@ function Tile({ label, value, tone, delay }: { label: string; value: string; ton
   const reduce = useReducedMotion();
   return (
     <motion.div
-      initial={reduce ? false : { opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.4, ease: [0.2, 0.8, 0.2, 1] }}
+      initial={reduce ? false : { opacity: 0, y: 18, scale: 0.7, rotate: -4 }}
+      animate={{ opacity: 1, y: 0, scale: 1, rotate: 0 }}
+      transition={{ type: "spring", stiffness: 480, damping: 14, delay }}
+      whileHover={{ y: -3, rotate: 1 }}
       className="rounded-xl border bg-card px-4 py-3"
     >
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -51,12 +53,15 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
       initial={reduce ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
     >
-      <div className="w-full max-w-[28rem] text-center">
+      <div className="relative w-full max-w-[28rem] text-center">
+        <div className="absolute inset-x-0 top-10">
+          <Confetti fire={info.orderId} count={70} spread={340} />
+        </div>
         <motion.div
           className="mx-auto flex size-20 items-center justify-center rounded-full bg-good/15"
-          initial={reduce ? false : { scale: 0.4, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 260, damping: 18 }}
+          initial={reduce ? false : { scale: 0, rotate: -90, opacity: 0 }}
+          animate={reduce ? { opacity: 1 } : { scale: [0, 1.25, 0.9, 1.05, 1], rotate: [-90, 10, -6, 0, 0], opacity: 1 }}
+          transition={{ duration: 0.75, times: [0, 0.45, 0.65, 0.85, 1] }}
         >
           <motion.span
             aria-hidden="true"
@@ -88,9 +93,9 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
         </motion.p>
         <motion.h2
           className="money mt-2 text-[2.6rem] leading-none font-semibold tracking-tight text-good"
-          initial={reduce ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
+          initial={reduce ? false : { opacity: 0, y: 20, scale: 0.6 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ type: "spring", stiffness: 500, damping: 12, delay: 0.45 }}
         >
           {formatMxn(info.landedLocal)}
         </motion.h2>
