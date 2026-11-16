@@ -62,4 +62,4 @@ and a balance invariant (contract balance = bonds + escrow of open orders).
 - **Mock oracle on testnet.** Reflector's testnet feed has no live MXN price (see `contracts/mock_oracle/REFLECTOR_CHECK.md`). The contract reads it through the Reflector interface, so mainnet is a one-address change.
 - **Amounts and addresses are public on-chain.** Recipient details are not: only a hash is stored.
 - **OpenZeppelin version.** We use `stellar-contract-utils` 0.8.0, the release that supports our SDK line. We have not checked whether that exact release is covered by a published audit report.
-- **Static analysis.** Scout (`cargo scout-audit`) result: _pending_.
+- **Static analysis: not completed.** We tried Scout (`cargo-scout-audit` 0.3.17) on 15 Nov 2026. It did not get as far as analysing the contract: its own lint driver failed to build on our machine (`dylint_driver` error, "revspec 'master' not found"). So there is no static-analysis result to report, clean or otherwise.
