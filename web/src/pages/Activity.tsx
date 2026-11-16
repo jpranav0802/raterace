@@ -122,7 +122,9 @@ export default function Activity() {
                   <Flag country={t.country} className="absolute -right-1 -bottom-1 size-4.5 ring-2 ring-card" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{t.recipientName}</p>
+                  <Link to={`/order/${t.orderId}`} className="block truncate font-medium hover:underline">
+                    {t.recipientName}
+                  </Link>
                   <p className="truncate text-xs text-muted-foreground">
                     {new Date(t.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                     {" · "}
