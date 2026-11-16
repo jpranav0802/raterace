@@ -37,16 +37,18 @@ export interface AuditRow {
   markupBps?: number;
   /** Market mode: the real provider's live public price this lane carries. */
   live?: { type: string; feeUsd: number; rate: number; collectedAt: string };
-  /** Market mode: the registered test provider that signed and backs this price. */
+  /** Anchors mode: a real Stellar anchor's name with a simulated price. */
+  sim?: { note: string };
+  /** Market/anchors mode: the registered test provider that signed and backs this price. */
   standIn?: { name: string; displayName: string };
 }
 export type RfqWithAudit = RfqResponse & {
   audit?: AuditRow[];
-  mode?: "simulated" | "market";
+  mode?: "simulated" | "market" | "anchors";
   source?: { name: string; url: string; oldestCollected?: string };
 };
-/** "market": real providers' live prices bid (signed by test stand-ins). */
-export type RfqRequestWithMode = RfqRequest & { mode?: "market" };
+/** "market": real providers' live prices bid; "anchors": real Stellar anchors with simulated prices. */
+export type RfqRequestWithMode = RfqRequest & { mode?: "market" | "anchors" };
 
 export interface Market {
   price: string;

@@ -21,8 +21,8 @@ import { rememberTransfer } from "@/lib/local";
 import { clearPending, loadPending, savePending, type PendingTransfer } from "@/lib/transfer";
 import { demoKeypair } from "@/lib/wallet";
 
-/** The most an offer may land below the market rate, all fees included (3%). */
-const MAX_MARKUP_BPS = 300;
+/** Limits the sender can choose: refuse offers further below the market rate than this. */
+const LIMIT_OPTIONS = [100, 200, 300];
 /** Codes that mean "these offers can't be used any more; get fresh ones". */
 const STALE_CODES = new Set([20, 21]);
 
@@ -37,7 +37,12 @@ class SendError extends Error {
   }
 }
 
-async function lockOffer(t: PendingTransfer, q: RankedQuote, standIn?: AuditRow["standIn"]): Promise<LockedInfo> {
+async function lockOffer(
+  t: PendingTransfer,
+  q: RankedQuote,
+  limitBps: number,
+  standIn?: AuditRow["standIn"],
+): Promise<LockedInfo> {
   /** Who signed the price and whose bond backs it (the stand-in in market mode). */
   const backer = standIn?.displayName ?? q.displayName;
   const kp = demoKeypair();
@@ -59,7 +64,7 @@ async function lockOffer(t: PendingTransfer, q: RankedQuote, standIn?: AuditRow[
       quote: toContractQuote(q),
       signature: Buffer.from(hexToBytes(q.signature)),
       recipient_hash: Buffer.from(hexToBytes(t.recipientHash)),
-      max_markup_bps: MAX_MARKUP_BPS,
+      max_markup_bps: limitBps,
     });
   } catch (e) {
     chainlog.fail(sim);
@@ -72,7 +77,7 @@ async function lockOffer(t: PendingTransfer, q: RankedQuote, standIn?: AuditRow[
   }
   chainlog.done(sim, {
     title: "Contract checks passed",
-    detail: `signature ✓ · market price fresh ✓ · ${q.markupBps < 0 ? "above market" : `${formatBps(q.markupBps)} ≤ 3.00%`} ✓ · ${backer}'s bond covers it ✓`,
+    detail: `signature ✓ · market price fresh ✓ · ${q.markupBps < 0 ? "above market" : `${formatBps(q.markupBps)} ≤ your ${formatBps(limitBps)} limit`} ✓ · ${backer}'s bond covers it ✓`,
   });
 
   // 2. Signed here; the key never leaves this device.
@@ -132,6 +137,7 @@ export default function Quotes() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState<LockedInfo | null>(null);
+  const [limitBps, setLimitBps] = useState(300);
 
   const onExpire = useCallback(() => setExpired(true), []);
 
@@ -150,18 +156,24 @@ export default function Quotes() {
   const { request } = transfer;
   const send = BigInt(request.sendUsdc);
   const market = marketLocal(send, BigInt(rfq.oracle.price));
-  const picked = rfq.quotes.find((q) => q.anchorName === selectedId) ?? rfq.quotes[0];
+  const allowed = rfq.quotes.filter((q) => q.markupBps <= limitBps);
+  const picked =
+    allowed.find((q) => q.anchorName === selectedId) ?? allowed[0] ?? rfq.quotes.find((q) => q.anchorName === selectedId) ?? rfq.quotes[0];
+  const pickedAllowed = picked.markupBps <= limitBps;
   const payoutFee = BigInt(picked.fees.payoutFeeLocal);
   // Work in whole centavos as displayed, so the receipt lines add up exactly to the total.
   const CENT = 100_000n;
   const margin = ((market / CENT) - (payoutFee / CENT) - (BigInt(picked.landedLocal) / CENT)) * CENT;
-  const liveMode = rfq.mode === "market";
+  const liveMode = rfq.mode === "market" || rfq.mode === "anchors";
+  const anchorsMode = rfq.mode === "anchors";
   const pickedAudit = rfq.audit?.find((a) => a.name === picked.anchorName);
   const standIn = pickedAudit?.standIn;
-  const feeLabel = liveMode
-    ? `${picked.displayName}'s fee${pickedAudit?.live ? ` ($${pickedAudit.live.feeUsd.toFixed(2)})` : ""}`
-    : "Bank payout fee";
-  const deliverer = standIn ? `test provider ${standIn.displayName}` : picked.displayName;
+  const feeLabel = anchorsMode
+    ? `${picked.displayName}'s payout fee`
+    : liveMode
+      ? `${picked.displayName}'s fee${pickedAudit?.live ? ` ($${pickedAudit.live.feeUsd.toFixed(2)})` : ""}`
+      : "Bank payout fee";
+  const deliverer = standIn ? `test anchor ${standIn.displayName}` : picked.displayName;
 
   async function refresh() {
     if (!transfer) return;
@@ -184,11 +196,11 @@ export default function Quotes() {
   }
 
   async function lock() {
-    if (!transfer || busy || expired) return;
+    if (!transfer || busy || expired || !pickedAllowed) return;
     setError(null);
     setBusy(`Locking ${picked.displayName}'s price…`);
     try {
-      const info = await lockOffer(transfer, picked, standIn);
+      const info = await lockOffer(transfer, picked, limitBps, standIn);
       rememberTransfer({
         orderId: info.orderId,
         hash: info.hash,
@@ -235,9 +247,11 @@ export default function Quotes() {
 
       <h1 className="mt-7 text-[1.9rem]">Choose an offer</h1>
       <p className="mt-2 mb-6 text-muted-foreground">
-        {liveMode
-          ? `Live prices from ${rfq.audit?.length ?? 0} providers for this exact transfer, best first. Offers more than 3% below the market rate are refused.`
-          : "Signed offers from licensed providers for this exact transfer, best first."}
+        {anchorsMode
+          ? `${rfq.audit?.length ?? 0} Stellar anchors that pay out in Mexico are bidding for this exact transfer, best first.`
+          : liveMode
+            ? `Live prices from ${rfq.audit?.length ?? 0} providers for this exact transfer, best first.`
+            : "Signed offers from licensed providers for this exact transfer, best first."}
       </p>
 
       <RaceTrack
@@ -247,7 +261,33 @@ export default function Quotes() {
         marketLocal={market}
         selectedId={picked.anchorName}
         onSelect={setSelectedId}
+        limitBps={limitBps}
       />
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm">
+        <span className="text-muted-foreground">Protect me from offers worse than</span>
+        <div role="radiogroup" aria-label="Your limit below the market rate" className="flex gap-1">
+          {LIMIT_OPTIONS.map((bps) => (
+            <button
+              key={bps}
+              type="button"
+              role="radio"
+              aria-checked={limitBps === bps}
+              onClick={() => setLimitBps(bps)}
+              className={
+                limitBps === bps
+                  ? "money rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
+                  : "money rounded-full border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+              }
+            >
+              {bps / 100}%
+            </button>
+          ))}
+        </div>
+        <span className="w-full text-xs text-muted-foreground">
+          below the market rate. The contract enforces your choice: it won't lock an offer past this line.
+        </span>
+      </div>
 
       <div className="mt-4">
         {expired ? (
@@ -259,7 +299,14 @@ export default function Quotes() {
         )}
       </div>
 
-      {liveMode && (
+      {anchorsMode && (
+        <p className="mt-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+          Bitso, Koywe, Etherfuse, Alfred Pay and MoneyGram are real Stellar anchors that serve Mexico. Their prices here are
+          simulated for this demo, not quotes from these companies, and they aren't RateRace partners. On the Stellar test
+          network, each price is signed and backed by one of our test anchors.
+        </p>
+      )}
+      {liveMode && !anchorsMode && (
         <p className="mt-3 text-[0.72rem] leading-relaxed text-muted-foreground">
           Prices are each provider's live public quote for this amount, fee and exchange-rate margin included, from{" "}
           {rfq.source ? (
@@ -292,7 +339,7 @@ export default function Quotes() {
           total={formatMxn(picked.landedLocal)}
           note={
             standIn
-              ? `Locked at ${picked.displayName}'s live price. Your money is held until ${deliverer} pays your family; if it misses the deadline, you get it all back plus a penalty from its bond.`
+              ? `Locked at ${picked.displayName}'s price. Your money is held until ${deliverer} pays your family; if it misses the deadline, you get it all back plus a penalty from its bond.`
               : `Your money is held until ${picked.displayName} pays your family. If ${picked.displayName} misses the deadline, you get it all back plus a penalty.`
           }
         />
@@ -310,7 +357,7 @@ export default function Quotes() {
             {busy ?? "Get new offers"}
           </Button>
         ) : (
-          <Button size="lg" className="w-full" onClick={lock} disabled={!!busy} aria-busy={!!busy}>
+          <Button size="lg" className="w-full" onClick={lock} disabled={!!busy || !pickedAllowed} aria-busy={!!busy}>
             {busy ?? (liveMode ? `Lock ${picked.displayName}'s price` : `Send with ${picked.displayName}`)}
           </Button>
         )}

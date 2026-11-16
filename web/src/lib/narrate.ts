@@ -22,6 +22,24 @@ export function narrateRfq(rfq: RfqWithAudit) {
     detail: `1 USD = ${rfq.oracle.mxnPerUsd.toFixed(4)} MXN · ${ageMin} min old (limit ${MAX_ORACLE_AGE_MIN})`,
   });
   const rows = rfq.audit ?? [];
+  if (rfq.mode === "anchors") {
+    chainlog.add({
+      title: `${rows.length} Stellar anchors asked for signed offers`,
+      detail: "same request to everyone · prices simulated for the demo",
+    });
+    for (const a of rows) {
+      const q = rfq.quotes.find((x) => x.anchorName === a.name);
+      if (q) {
+        chainlog.add({
+          title: `${a.displayName} offers ${formatMxn(q.landedLocal)}`,
+          detail: `${formatBps(q.markupBps)} below market · signed & bonded by test anchor ${a.standIn?.displayName} · signature ✓`,
+        });
+      } else {
+        chainlog.add({ title: `${a.displayName}: ${REASON[a.outcome] ?? "no offer"}`, status: "failed" });
+      }
+    }
+    return;
+  }
   if (rfq.mode === "market") {
     chainlog.add({
       title: `Live prices from ${rows.length} real providers`,

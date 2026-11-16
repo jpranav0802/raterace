@@ -36,7 +36,7 @@ interface Lane {
 
 /** Launch delay: real response time (x4) in simulated mode; a gentle stagger in market mode. */
 function launchDelay(lane: Lane, index: number) {
-  if (lane.audit?.live) return LAUNCH_BASE_MS + index * 120;
+  if (lane.audit?.live || lane.audit?.sim) return LAUNCH_BASE_MS + index * 120;
   return LAUNCH_BASE_MS + Math.min(1600, (lane.audit?.ms ?? 0) * 4);
 }
 
@@ -87,8 +87,10 @@ function LaneRow({
   onSelect,
   runKey,
   marketNum,
+  limitBps,
 }: {
   lane: Lane;
+  limitBps: number;
   index: number;
   best: boolean;
   finished: boolean;
@@ -99,8 +101,11 @@ function LaneRow({
 }) {
   const reduce = useReducedMotion();
   const delay = launchDelay(lane, index);
-  const valid = !!lane.quote;
+  /** Selectable: a signed offer within the sender's own limit. */
+  const valid = !!lane.quote && lane.markupBps <= limitBps;
+  const beyondLimit = !!lane.quote && lane.markupBps > limitBps;
   const live = lane.audit?.live;
+  const sim = lane.audit?.sim;
   const shown = useCountUp(lane.landed, marketNum * 0.9, delay, RUN_MS, runKey);
   const pos = position(lane.markupBps);
   const winner = finished && best;
@@ -116,6 +121,7 @@ function LaneRow({
 
   let detail: string;
   if (valid) detail = lane.markupBps < 0 ? "above the market rate" : `${formatBps(lane.markupBps)} below market`;
+  else if (beyondLimit) detail = `${formatBps(lane.markupBps)} below market · beyond your ${formatBps(limitBps)} limit`;
   else if (lane.audit?.outcome === "over-cap") detail = `${formatBps(lane.markupBps)} below market · refused by the 3% rule`;
   else detail = lane.audit ? OUTCOME_TEXT[lane.audit.outcome] : "no offer";
 
@@ -155,6 +161,7 @@ function LaneRow({
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <span className={cn("font-medium", !valid && "text-muted-foreground")}>{lane.name}</span>
           {live?.type === "bank" && <span className="text-[0.7rem] text-muted-foreground">bank</span>}
+          {sim && <span className="text-[0.7rem] text-muted-foreground">{sim.note}</span>}
           {winner && (
             <motion.span initial={reduce ? false : { scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
               <Badge variant="good" className="whitespace-nowrap">
@@ -167,7 +174,8 @@ function LaneRow({
           className={cn(
             "money shrink-0 text-lg font-semibold tracking-tight transition-colors duration-500 sm:text-xl",
             winner && "text-good",
-            !valid && "text-base font-medium text-bad/80 line-through decoration-1 sm:text-lg",
+            !valid && beyondLimit && "text-base font-medium text-muted-foreground sm:text-lg",
+            !valid && !beyondLimit && "text-base font-medium text-bad/80 line-through decoration-1 sm:text-lg",
           )}
         >
           {amount}
@@ -180,7 +188,7 @@ function LaneRow({
             key={runKey}
             className={cn(
               "absolute inset-y-0 left-0 rounded-full",
-              !valid ? "bg-bad/60" : winner ? "bg-good" : "bg-gradient-to-r from-foreground/10 to-foreground/70",
+              beyondLimit ? "bg-muted-foreground/40" : !valid ? "bg-bad/60" : winner ? "bg-good" : "bg-gradient-to-r from-foreground/10 to-foreground/70",
             )}
             initial={reduce ? false : { width: "0%" }}
             animate={{ width: `${pos * 100}%` }}
@@ -189,7 +197,9 @@ function LaneRow({
             <span
               className={cn(
                 "absolute top-1/2 -right-1.5 size-3 -translate-y-1/2 rounded-full",
-                !valid
+                beyondLimit
+                  ? "bg-muted-foreground"
+                  : !valid
                   ? "bg-bad"
                   : winner
                     ? "bg-good shadow-[0_0_16px_4px] shadow-good/60"
@@ -199,12 +209,12 @@ function LaneRow({
           </motion.div>
         </div>
         <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-[0.76rem] text-muted-foreground">
-          <span className={cn("money", !valid && "text-bad/90")}>{detail}</span>
+          <span className={cn("money", !valid && !beyondLimit && "text-bad/90")}>{detail}</span>
           {valid && lane.audit && (
             <span className="money inline-flex items-center gap-1">
               <ShieldCheck className="size-3.5 text-good" />
               {lane.audit.standIn
-                ? `signed & bonded by test provider ${lane.audit.standIn.displayName}`
+                ? `signed & bonded by test anchor ${lane.audit.standIn.displayName}`
                 : `signed · answered in ${lane.audit.ms} ms`}
             </span>
           )}
@@ -223,9 +233,11 @@ interface RaceTrackProps {
   onSelect?: (id: string) => void;
   /** Change to restart the race (e.g. new offers). */
   raceId: string;
+  /** The sender's own limit: offers further below market than this can't be picked. */
+  limitBps?: number;
 }
 
-export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, raceId }: RaceTrackProps) {
+export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, raceId, limitBps = 300 }: RaceTrackProps) {
   const reduce = useReducedMotion();
   const [runKey, setRunKey] = useState(0);
   const [finished, setFinished] = useState(!!reduce);
@@ -255,7 +267,8 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
     });
   }, [quotes, audit, marketLocal]);
 
-  const market = lanes.some((l) => l.audit?.live);
+  const market = lanes.some((l) => l.audit?.live || l.audit?.sim);
+  const anchorsMode = lanes.some((l) => l.audit?.sim);
   const bestId = quotes[0]?.anchorName;
   const totalMs = Math.max(...lanes.map((l, i) => launchDelay(l, i))) + RUN_MS + 250;
   const slowestReal = Math.max(0, ...lanes.map((l) => l.audit?.ms ?? 0));
@@ -272,8 +285,9 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
     ? [...lanes].sort((a, b) => (!!b.quote === !!a.quote ? b.landed - a.landed : a.quote ? -1 : 1))
     : lanes;
 
-  const valid = lanes.filter((l) => l.quote);
+  const valid = lanes.filter((l) => l.quote && l.markupBps <= limitBps);
   const refused = lanes.filter((l) => l.audit?.outcome === "over-cap").length;
+  const beyond = lanes.filter((l) => l.quote && l.markupBps > limitBps).length;
   const shownLanes = lanes.filter((l) => l.landed > 0);
   const spread =
     shownLanes.length > 1 ? Math.max(...shownLanes.map((l) => l.landed)) - Math.min(...shownLanes.map((l) => l.landed)) : 0;
@@ -286,7 +300,12 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
           {finished ? (
             <>
               <Check className="size-4 text-good" />
-              {market ? (
+              {anchorsMode ? (
+                <span>
+                  <span className="text-foreground">{valid.length} offers within your limit</span>
+                  {beyond > 0 && <span> · {beyond} beyond it</span>}
+                </span>
+              ) : market ? (
                 <span>
                   <span className="text-foreground">{valid.length} allowed</span> ·{" "}
                   <span className="text-bad">{refused} refused by the 3% rule</span>
@@ -301,7 +320,7 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
           ) : (
             <>
               <span className="size-3.5 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-foreground" />
-              {market ? `${lanes.length} providers are bidding…` : "Providers are racing…"}
+              {anchorsMode ? `${lanes.length} Stellar anchors are bidding…` : market ? `${lanes.length} providers are bidding…` : "Providers are racing…"}
             </>
           )}
         </span>
@@ -325,9 +344,10 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
             best={lane.id === bestId}
             finished={finished}
             selected={lane.id === selectedId}
-            onSelect={() => lane.quote && onSelect?.(lane.id)}
+            onSelect={() => lane.quote && lane.markupBps <= limitBps && onSelect?.(lane.id)}
             runKey={runKey}
             marketNum={marketNum}
+            limitBps={limitBps}
           />
         ))}
       </div>
@@ -338,7 +358,11 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
         </span>
         {finished && spread > 0 && (
           <motion.span initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="money text-good">
-            {market ? `Best vs worst provider today: ${mxn(spread)}` : `Competition is worth ${mxn(spread)} to your family`}
+            {anchorsMode
+              ? `Best vs worst offer: ${mxn(spread)}`
+              : market
+                ? `Best vs worst provider today: ${mxn(spread)}`
+                : `Competition is worth ${mxn(spread)} to your family`}
           </motion.span>
         )}
       </div>

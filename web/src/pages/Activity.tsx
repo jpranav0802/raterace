@@ -127,7 +127,7 @@ export default function Activity() {
                     {new Date(t.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                     {" · "}
                     {t.provider}
-                    {t.standIn ? ` (via test provider ${t.standIn})` : ""}
+                    {t.standIn ? ` (via test anchor ${t.standIn})` : ""}
                     {" · "}
                     <a
                       href={explorerTx(t.hash, config.explorerUrl)}

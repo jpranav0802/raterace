@@ -83,7 +83,7 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.4 }}
         >
-          {info.standIn ? `Locked at ${info.provider}'s live price` : `Offer locked with ${info.provider}`} · Order #
+          {info.standIn ? `Locked at ${info.provider}'s price` : `Offer locked with ${info.provider}`} · Order #
           {info.orderId}
         </motion.p>
         <motion.h2
@@ -135,7 +135,7 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           transition={{ delay: 1.2 }}
         >
           {info.standIn
-            ? `Test provider ${info.standIn} stands in to deliver it. If it misses the deadline, you get everything back plus a penalty from its bond.`
+            ? `Test anchor ${info.standIn} stands in to deliver it. If it misses the deadline, you get everything back plus a penalty from its bond.`
             : `If ${info.provider} misses the deadline, you get everything back plus a penalty from its bond.`}
         </motion.p>
 

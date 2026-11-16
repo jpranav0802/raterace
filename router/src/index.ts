@@ -2,6 +2,7 @@
 //
 //   POST /rfq            ask every anchor for a signed quote, verify each one, rank by landed amount (#13)
 //                        mode "market": real providers' live prices bid, signed and bonded by test stand-ins
+//                        mode "anchors": real Stellar anchors bid with simulated prices, same stand-ins
 //   GET  /anchors        anchors with their on-chain bond and track record (#13)
 //   POST /submit         sponsor (fee-bump) a sender-signed transaction so the sender pays no fees (#14)
 //   POST /onboard/fund   create a demo account with Friendbot (#14)
@@ -41,6 +42,7 @@ import {
   localPerUsd,
   markupBps,
   marketLocal,
+  landedLocal,
   toUnits,
   type QuoteJson,
   type RankedQuote,
@@ -247,7 +249,9 @@ interface AuditRow {
   markupBps?: number;
   /** Market mode: the real provider whose live price this lane carries. */
   live?: { type: string; feeUsd: number; rate: number; collectedAt: string };
-  /** Market mode: the registered test anchor that signed and backs this price. */
+  /** Anchors mode: a real Stellar anchor's name with a simulated price. */
+  sim?: { note: string };
+  /** Market/anchors mode: the registered test anchor that signed and backs this price. */
   standIn?: { name: string; displayName: string };
 }
 type Anchor = (typeof ANCHORS)[number];
@@ -411,6 +415,64 @@ async function marketBids(ctx: RfqCtx, audit: AuditRow[]) {
   return { settled: await Promise.allSettled(jobs), bm };
 }
 
+
+/**
+ * "anchors" mode: real Stellar anchors that pay out in Mexico bid for the transfer.
+ * Their real prices aren't public, so these are SIMULATED prices in a realistic range (a
+ * rate margin plus a payout fee), with a little per-request variation so the order can
+ * change. The web app says so on screen. Each price is signed and bonded on testnet by one
+ * of our honest test anchors standing in, exactly like market mode.
+ */
+const STELLAR_ANCHOR_BIDDERS = [
+  { name: "Bitso", note: "Exchange · SPEI payouts", spreadBps: 45, feeLocal: "5" },
+  { name: "Koywe", note: "On/off-ramp · SPEI", spreadBps: 75, feeLocal: "0" },
+  { name: "Etherfuse", note: "On/off-ramp · SPEI", spreadBps: 60, feeLocal: "12" },
+  { name: "Alfred Pay", note: "On/off-ramp · SPEI", spreadBps: 105, feeLocal: "0" },
+  { name: "MoneyGram", note: "Cash and bank network", spreadBps: 140, feeLocal: "20" },
+];
+const JITTER_BPS = 10;
+
+async function anchorBids(ctx: RfqCtx, audit: AuditRow[]) {
+  const [anchorsOnChain, chainConfig] = await Promise.all([
+    Promise.all(ANCHORS.map((a) => raterace.get_anchor({ anchor: a.address }).then((t) => t.result.unwrap()))),
+    raterace.get_config().then((t) => t.result.unwrap()),
+  ]);
+  const reserve = (ctx.sendUsdc * BigInt(chainConfig.bond_ratio_bps)) / 10_000n;
+  const free = anchorsOnChain.map((on, i) =>
+    on.active && MARKET_STAND_INS.includes(ANCHORS[i].name) ? BigInt(on.bond) - BigInt(on.reserved) : 0n,
+  );
+
+  const jobs: Promise<RankedQuote | null>[] = [];
+  for (const b of STELLAR_ANCHOR_BIDDERS) {
+    const spread = Math.max(0, b.spreadBps + Math.round((Math.random() * 2 - 1) * JITTER_BPS));
+    const fee = toUnits(b.feeLocal);
+    const landed = landedLocal(ctx.sendUsdc, ctx.price.price, spread, fee);
+    const row: AuditRow = {
+      name: `anchor-${slug(b.name)}`,
+      displayName: b.name,
+      ms: 0,
+      outcome: "error",
+      markupBps: markupBps(ctx.sendUsdc, landed, ctx.price.price),
+      sim: { note: b.note },
+    };
+    audit.push(row);
+    let best = -1;
+    free.forEach((f, i) => {
+      if (f >= reserve && (best < 0 || f > free[best])) best = i;
+    });
+    if (best < 0) {
+      row.outcome = "no-bond";
+      continue;
+    }
+    free[best] -= reserve;
+    const a = ANCHORS[best];
+    row.standIn = { name: a.name, displayName: a.displayName };
+    const standIn: StandInRequest = { provider: b.name, landed_local: landed.toString(), fee_local: fee.toString(), spread_bps: spread };
+    jobs.push(askAnchor(a, ctx, row, standIn).then((q) => (q ? { ...q, anchorName: row.name, displayName: b.name } : null)));
+  }
+  return Promise.allSettled(jobs);
+}
+
 app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
   try {
     const body = req.body ?? {};
@@ -433,10 +495,13 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
     };
 
     const audit: AuditRow[] = [];
-    const market = body.mode === "market";
+    const mode: "simulated" | "market" | "anchors" =
+      body.mode === "market" ? "market" : body.mode === "anchors" ? "anchors" : "simulated";
     let settled: PromiseSettledResult<RankedQuote | null>[];
     let source: { name: string; url: string; oldestCollected?: string } | undefined;
-    if (market) {
+    if (mode === "anchors") {
+      settled = await anchorBids(ctx, audit);
+    } else if (mode === "market") {
       const r = await marketBids(ctx, audit);
       settled = r.settled;
       source = { name: r.bm.source, url: r.bm.sourceUrl, oldestCollected: r.bm.providers.map((p) => p.collectedAt).sort()[0] };
@@ -452,8 +517,8 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
       .filter((q): q is RankedQuote => q !== null)
       .sort((x, y) => (BigInt(y.landedLocal) > BigInt(x.landedLocal) ? 1 : BigInt(y.landedLocal) < BigInt(x.landedLocal) ? -1 : 0));
 
-    const out: RfqResponse & { audit: AuditRow[]; mode: "simulated" | "market"; source?: typeof source } = {
-      mode: market ? "market" : "simulated",
+    const out: RfqResponse & { audit: AuditRow[]; mode: typeof mode; source?: typeof source } = {
+      mode,
       source,
       audit,
       requestId: ctx.requestId,

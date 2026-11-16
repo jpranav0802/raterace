@@ -170,8 +170,8 @@ export default function Send() {
       const kp = await ensureReady(units, setBusy);
       setBusy("Collecting live offers…");
       const request: RfqRequestWithMode = {
-        // Real providers' live prices bid (signed and bonded by test stand-ins on testnet).
-        mode: "market",
+        // Real Stellar anchors bid with simulated prices (signed and bonded by test anchors).
+        mode: "anchors",
         corridor: corridor.corridor,
         assetCode: ASSET_MXN,
         sendUsdc: units.toString(),
