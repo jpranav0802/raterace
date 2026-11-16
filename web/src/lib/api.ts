@@ -53,6 +53,7 @@ export type RfqRequestWithMode = RfqRequest & { mode?: "market" | "anchors" };
 export interface Market {
   price: string;
   timestamp: number;
+  /** Local currency per 1 USD, whatever the currency (the name is from the Mexico-only days). */
   mxnPerUsd: number;
   ageS: number;
 }
@@ -80,7 +81,7 @@ export interface Benchmarks {
 export const api = {
   benchmarks: (sendUsdc: string) => call<Benchmarks>(`/benchmarks?sendUsdc=${encodeURIComponent(sendUsdc)}`),
   health: () => call<{ ok: boolean; usdc: { code: string; issuer: string } }>("/health"),
-  market: () => call<Market>("/market"),
+  market: (asset = "MXN") => call<Market>(`/market?asset=${encodeURIComponent(asset)}`),
   fund: (publicKey: string) => call<{ ok: boolean; existed?: boolean; hash?: string }>("/onboard/fund", { publicKey }),
   usdc: (publicKey: string) => call<{ ok: boolean; hash?: string }>("/onboard/usdc", { publicKey }),
   rfq: (req: RfqRequestWithMode) => call<RfqWithAudit>("/rfq", req),

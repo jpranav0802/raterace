@@ -1,6 +1,6 @@
 // The recipient's page, opened from the link the sender shares. No account, no wallet.
-// Shown in Spanish or English (the recipient is in Mexico; the phone's language decides).
-import { formatMxn, type FamilyView } from "@raterace/shared";
+// Shown in Spanish or English (the phone's language decides; there is a switch).
+import { corridorById, currencyOf, formatLocal, type FamilyView } from "@raterace/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ const TEXT = {
     paidBody: (p: string, a: string) => `${p} says it paid ${a} into your bank account.`,
     bankLabel: "Demo bank alert",
     bankNote: "In real use this is the alert from your own bank.",
-    bankLine: (a: string) => `Deposit received: ${a} by SPEI`,
+    bankLine: (a: string, rail: string) => `Deposit received: ${a} by ${rail}`,
     yes: "Yes, it arrived",
     no: "No, it hasn't arrived",
     sending: "Sending…",
@@ -60,7 +60,7 @@ const TEXT = {
     paidBody: (p: string, a: string) => `${p} dice que depositó ${a} en tu cuenta bancaria.`,
     bankLabel: "Aviso de banco de demostración",
     bankNote: "En el uso real, este es el aviso de tu propio banco.",
-    bankLine: (a: string) => `Depósito recibido: ${a} por SPEI`,
+    bankLine: (a: string, rail: string) => `Depósito recibido: ${a} por ${rail}`,
     yes: "Sí, ya llegó",
     no: "No, no ha llegado",
     sending: "Enviando…",
@@ -156,7 +156,8 @@ export default function Family() {
       </>
     );
   } else {
-    const amount = formatMxn(view.landedLocal);
+    const amount = formatLocal(view.landedLocal, currencyOf(view.corridor));
+    const rail = corridorById(view.corridor)?.method ?? "SPEI";
     const provider = PROVIDER_NAMES[view.anchorName] ?? "The provider";
     const late = view.status === "Open" && now > view.payoutDeadline;
 
@@ -182,7 +183,7 @@ export default function Family() {
           <p className="mt-2 text-muted-foreground">{t.paidBody(provider, amount)}</p>
           <Card className="mt-6 border-good/40">
             <p className="text-xs text-muted-foreground">{t.bankLabel}</p>
-            <p className="money mt-1 text-lg font-medium text-good">{t.bankLine(amount)}</p>
+            <p className="money mt-1 text-lg font-medium text-good">{t.bankLine(amount, rail)}</p>
             <p className="mt-2 text-xs text-muted-foreground">{t.bankNote}</p>
           </Card>
           <div className="mt-5 flex flex-col gap-2">

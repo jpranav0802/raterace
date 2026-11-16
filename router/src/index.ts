@@ -7,7 +7,7 @@
 //   POST /submit         sponsor (fee-bump) a sender-signed transaction so the sender pays no fees (#14)
 //   POST /onboard/fund   create a demo account with Friendbot (#14)
 //   POST /onboard/usdc   send 1,000 test USDC to a demo account (#14)
-//   GET  /market         the oracle MXN price and its age
+//   GET  /market         the oracle price and its age (?asset=INR; MXN by default)
 //   GET  /benchmarks     real providers' live quotes for the same amount, checked against the 3% rule
 //   GET  /health
 //
@@ -35,6 +35,10 @@ import {
   CONTRACT_ERRORS,
   CORRIDOR_MX_SPEI,
   PORTS,
+  corridorByCurrency,
+  corridorById,
+  scaleFee,
+  type CorridorInfo,
   TESTNET,
   explorerTx,
   fromUnits,
@@ -136,16 +140,21 @@ app.get("/health", (_req, res) => {
 });
 
 // ---------- GET /market ----------
-// The oracle's current MXN price, for showing the live market rate before quotes are asked.
+// The oracle's current price for a currency, for showing the live market rate before quotes
+// are asked. `mxnPerUsd` is the local currency per 1 USD whatever the currency (older name).
 
-app.get("/market", async (_req, res) => {
+app.get("/market", async (req, res) => {
   try {
-    const price = await oraclePrice(oracle, ASSET_MXN);
+    const asset = typeof req.query.asset === "string" ? req.query.asset : ASSET_MXN;
+    if (!corridorByCurrency(asset)) throw new HttpError(400, "Unsupported currency");
+    const price = await oraclePrice(oracle, asset);
     if (!price) throw new HttpError(503, "Market rate unavailable");
     res.json({
+      asset,
       price: price.price.toString(),
       timestamp: price.timestamp,
       mxnPerUsd: localPerUsd(price.price),
+      localPerUsd: localPerUsd(price.price),
       ageS: Math.max(0, Math.floor(Date.now() / 1000) - price.timestamp),
     });
   } catch (e) {
@@ -267,6 +276,7 @@ interface RfqCtx {
   sendUsdc: bigint;
   sender: string;
   price: { price: bigint };
+  corridor: CorridorInfo;
 }
 
 /**
@@ -284,12 +294,12 @@ async function askAnchor(a: Anchor, ctx: RfqCtx, row: AuditRow, standIn?: StandI
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       sell_asset: `stellar:${USDC_CODE}:${USDC_ISSUER}`,
-      buy_asset: `iso4217:${ASSET_MXN}`,
+      buy_asset: `iso4217:${ctx.corridor.currency}`,
       sell_amount: fromUnits(ctx.sendUsdc, 7),
       context: "sep31",
       raterace: {
         request_id: ctx.requestId,
-        corridor: CORRIDOR_MX_SPEI,
+        corridor: ctx.corridor.id,
         sender: ctx.sender,
         expires_at: ctx.expiresAt,
         ...(standIn ? { stand_in: standIn } : {}),
@@ -308,8 +318,8 @@ async function askAnchor(a: Anchor, ctx: RfqCtx, row: AuditRow, standIn?: StandI
   if (
     quote.anchor !== a.address ||
     quote.requestId !== ctx.requestId ||
-    quote.corridor !== CORRIDOR_MX_SPEI ||
-    quote.assetCode !== ASSET_MXN ||
+    quote.corridor !== ctx.corridor.id ||
+    quote.assetCode !== ctx.corridor.currency ||
     quote.sendUsdc !== ctx.sendUsdc.toString() ||
     quote.expiresAt !== ctx.expiresAt ||
     !/^\d+$/.test(quote.landedLocal) ||
@@ -430,6 +440,22 @@ const STELLAR_ANCHOR_BIDDERS = [
   { name: "Alfred Pay", note: "On/off-ramp · SPEI", spreadBps: 105, feeLocal: "0" },
   { name: "MoneyGram", note: "Cash and bank network", spreadBps: 140, feeLocal: "20" },
 ];
+/**
+ * Corridors other than Mexico: we have not checked which real anchors serve them, so no
+ * company is named. The bidders are plainly labelled test providers with simulated prices
+ * (same fee levels as above, scaled to the currency).
+ */
+const TEST_BIDDERS = [
+  { name: "Test provider 1", spreadBps: 45, feeLocal: "5" },
+  { name: "Test provider 2", spreadBps: 75, feeLocal: "0" },
+  { name: "Test provider 3", spreadBps: 60, feeLocal: "12" },
+  { name: "Test provider 4", spreadBps: 105, feeLocal: "0" },
+  { name: "Test provider 5", spreadBps: 140, feeLocal: "20" },
+];
+const biddersFor = (c: CorridorInfo) =>
+  c.id === CORRIDOR_MX_SPEI
+    ? STELLAR_ANCHOR_BIDDERS
+    : TEST_BIDDERS.map((b) => ({ ...b, note: `Simulated price · ${c.method}` }));
 const JITTER_BPS = 10;
 
 async function anchorBids(ctx: RfqCtx, audit: AuditRow[]) {
@@ -443,9 +469,10 @@ async function anchorBids(ctx: RfqCtx, audit: AuditRow[]) {
   );
 
   const jobs: Promise<RankedQuote | null>[] = [];
-  for (const b of STELLAR_ANCHOR_BIDDERS) {
+  for (const b of biddersFor(ctx.corridor)) {
     const spread = Math.max(0, b.spreadBps + Math.round((Math.random() * 2 - 1) * JITTER_BPS));
-    const fee = toUnits(b.feeLocal);
+    // Fees are defined in pesos; scale them to a similar value in this currency.
+    const fee = scaleFee(toUnits(b.feeLocal), ctx.corridor.currency);
     const landed = landedLocal(ctx.sendUsdc, ctx.price.price, spread, fee);
     const row: AuditRow = {
       name: `anchor-${slug(b.name)}`,
@@ -476,15 +503,18 @@ async function anchorBids(ctx: RfqCtx, audit: AuditRow[]) {
 app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
   try {
     const body = req.body ?? {};
-    if (body.corridor !== CORRIDOR_MX_SPEI) throw new HttpError(400, "Only MX_SPEI is supported for now");
-    if (body.assetCode !== ASSET_MXN) throw new HttpError(400, "assetCode must be MXN");
+    const corridor = typeof body.corridor === "string" ? corridorById(body.corridor) : undefined;
+    if (!corridor) throw new HttpError(400, "Unsupported corridor");
+    if (body.assetCode !== corridor.currency) {
+      throw new HttpError(400, `assetCode must be ${corridor.currency} for ${corridor.id}`);
+    }
     if (typeof body.sendUsdc !== "string" || !/^\d+$/.test(body.sendUsdc) || BigInt(body.sendUsdc) <= 0n) {
       throw new HttpError(400, "sendUsdc must be a positive integer string (7 decimals)");
     }
     if (typeof body.sender !== "string" || !StrKey.isValidEd25519PublicKey(body.sender)) {
       throw new HttpError(400, "sender must be a valid G... address");
     }
-    const price = await oraclePrice(oracle, ASSET_MXN);
+    const price = await oraclePrice(oracle, corridor.currency);
     if (!price) throw new HttpError(503, "Market rate unavailable, try again in a minute");
     const ctx: RfqCtx = {
       requestId: randomBytes(32).toString("hex"),
@@ -492,9 +522,14 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
       sendUsdc: BigInt(body.sendUsdc),
       sender: body.sender,
       price,
+      corridor,
     };
 
     const audit: AuditRow[] = [];
+    // "market" compares against Wise's public USD->MXN data, so it only exists for Mexico.
+    if (body.mode === "market" && corridor.id !== CORRIDOR_MX_SPEI) {
+      throw new HttpError(400, "Live market mode is only available for Mexico");
+    }
     const mode: "simulated" | "market" | "anchors" =
       body.mode === "market" ? "market" : body.mode === "anchors" ? "anchors" : "simulated";
     let settled: PromiseSettledResult<RankedQuote | null>[];
@@ -523,7 +558,14 @@ app.post("/rfq", rateLimit("rfq", 30, 60_000), async (req, res) => {
       audit,
       requestId: ctx.requestId,
       expiresAt: ctx.expiresAt,
-      oracle: { price: price.price.toString(), timestamp: price.timestamp, mxnPerUsd: localPerUsd(price.price) },
+      oracle: {
+        price: price.price.toString(),
+        timestamp: price.timestamp,
+        mxnPerUsd: localPerUsd(price.price),
+        localPerUsd: localPerUsd(price.price),
+      },
+      corridor: corridor.id,
+      assetCode: corridor.currency,
       onRampFeeUsd: "0.00",
       quotes,
     };

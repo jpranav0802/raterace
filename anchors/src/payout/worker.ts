@@ -10,7 +10,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Keypair, contract, rpc } from "@stellar/stellar-sdk";
-import { explorerTx, formatMxn, type AnchorName } from "@raterace/shared";
+import { corridorById, explorerTx, formatLocal, type AnchorName } from "@raterace/shared";
 import { RateRaceClient } from "@raterace/shared/chain";
 import { fetchEvents, type EventCursor } from "@raterace/shared/events";
 import { REPO_ROOT, loadConfig, optionalEnv } from "@raterace/shared/node";
@@ -80,10 +80,13 @@ function startWorker(name: AnchorName) {
       }
 
       // The "bank transfer". Only its hash goes on-chain; the receipt itself stays with the anchor.
+      const corridor = corridorById(String(order.quote.corridor));
+      const currency = String(order.quote.asset_code);
       const receipt = {
         orderId: key,
-        rail: "SPEI",
-        amountMxn: order.quote.landed_local.toString(),
+        rail: corridor?.method ?? "bank transfer",
+        currency,
+        amountLocal: order.quote.landed_local.toString(),
         recipientHash: Buffer.from(order.recipient_hash).toString("hex"),
         trackingId: randomBytes(8).toString("hex"),
         paidAt: new Date().toISOString(),
@@ -94,7 +97,7 @@ function startWorker(name: AnchorName) {
       const sent = await tx.signAndSend();
       const hash = sent.sendTransactionResponse?.hash ?? "";
       console.log(
-        `payout ${name}: order ${key} paid ${formatMxn(order.quote.landed_local)} -> mark_paid ` +
+        `payout ${name}: order ${key} paid ${formatLocal(order.quote.landed_local, currency)} -> mark_paid ` +
           (hash ? explorerTx(hash, cfg.explorerUrl) : "sent"),
       );
     } catch (e) {

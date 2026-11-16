@@ -7,7 +7,7 @@ export interface AnchorProfile {
   displayName: string;
   /** Margin the anchor takes on the exchange rate, in basis points. */
   spreadBps: number;
-  /** Flat fee for the bank payout, in MXN units (7 decimals). */
+  /** Flat fee for the bank payout, in MXN units (7 decimals). Scaled for other currencies (scaleFee). */
   payoutFeeLocal: bigint;
 }
 

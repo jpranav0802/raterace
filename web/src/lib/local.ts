@@ -49,6 +49,7 @@ function store<T>(key: string, fallback: T) {
 export interface Recipient {
   id: string;
   name: string;
+  /** The recipient's account in their country's format (a CLABE in Mexico, a UPI ID in India…). */
   clabe: string;
   country: string;
   lastSentAt: number;
@@ -89,13 +90,23 @@ export function rememberTransfer(t: TransferRecord) {
 export const networkView = store<boolean>("raterace_network_view", true);
 
 /**
- * Sample contacts so the demo can be run without typing an account number. The CLABEs are
- * well-formed (real bank codes, valid check digit) but made up; they are labelled "Sample".
+ * Sample contacts so the demo can be run without typing an account number. The people and
+ * accounts are made up and labelled "Sample" (the CLABEs are well-formed: real bank codes,
+ * valid check digit). One or more per country the app can send to.
  */
 export const SAMPLE_CONTACTS: Recipient[] = [
   { id: "sample:rosa", name: "Rosa Hernández", clabe: "012180015412378003", country: "mx", lastSentAt: 0 },
   { id: "sample:luis", name: "Luis García", clabe: "072180009873214008", country: "mx", lastSentAt: 0 },
   { id: "sample:maria", name: "María López", clabe: "014180065501939000", country: "mx", lastSentAt: 0 },
+  { id: "sample:priya", name: "Priya Sharma", clabe: "priya.sharma@examplebank", country: "in", lastSentAt: 0 },
+  { id: "sample:arjun", name: "Arjun Patel", clabe: "arjun.patel@examplebank", country: "in", lastSentAt: 0 },
+  { id: "sample:marites", name: "Marites Santos", clabe: "001234567890", country: "ph", lastSentAt: 0 },
+  { id: "sample:ana", name: "Ana Silva", clabe: "ana.silva@example.com", country: "br", lastSentAt: 0 },
+  { id: "sample:carlos", name: "Carlos Rodríguez", clabe: "12345678901", country: "co", lastSentAt: 0 },
+  { id: "sample:lucia", name: "Lucía Morales", clabe: "3001234567", country: "gt", lastSentAt: 0 },
+  { id: "sample:jose", name: "José Pérez", clabe: "7601234567", country: "do", lastSentAt: 0 },
+  { id: "sample:chinedu", name: "Chinedu Okafor", clabe: "0123456789", country: "ng", lastSentAt: 0 },
+  { id: "sample:lan", name: "Nguyễn Thị Lan", clabe: "1023456789", country: "vn", lastSentAt: 0 },
 ];
 
 export const isSample = (r: Recipient) => r.id.startsWith("sample:");

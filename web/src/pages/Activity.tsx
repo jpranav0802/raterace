@@ -1,6 +1,6 @@
 // Past transfers from this browser, with their live status read from the contract.
 // Owner: Abhiraj (demo polish).
-import { explorerTx, formatMxn, formatUsd } from "@raterace/shared";
+import { explorerTx, formatLocal, formatUsd } from "@raterace/shared";
 import { RateRaceClient } from "@raterace/shared/chain";
 import { ArrowUpRight, Send as SendIcon } from "lucide-react";
 import { motion } from "motion/react";
@@ -157,7 +157,7 @@ export default function Activity() {
                   </p>
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className="money font-semibold">{formatMxn(t.landedLocal)}</p>
+                  <p className="money font-semibold">{formatLocal(t.landedLocal, t.currency || "MXN")}</p>
                   <p className="money text-xs text-muted-foreground">{formatUsd(t.sendUsdc)} sent</p>
                 </div>
               </motion.li>

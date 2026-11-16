@@ -217,6 +217,7 @@ async function main() {
       id,
       status: order.status,
       landedLocal: order.landedLocal,
+      corridor: order.corridor,
       anchorName: order.anchorName,
       payoutDeadline: order.payoutDeadline,
       challengeEnds: order.challengeEnds,

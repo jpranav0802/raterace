@@ -1,5 +1,5 @@
 // Owner: Abhiraj (issue #17). Built from the components shown on /design.
-import { ASSET_MXN, formatMxn, fromUnits, marketLocal, toUnits } from "@raterace/shared";
+import { fromUnits, marketLocal, toUnits } from "@raterace/shared";
 import { Check, ChevronDown, Clock, Landmark, Lock, Plus, Scale, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -11,8 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, type Market, type RfqRequestWithMode } from "@/lib/api";
 import { chainlog } from "@/lib/chainlog";
-import { bankName, clabeError, maskClabe } from "@/lib/clabe";
-import { CORRIDORS, DEFAULT_CORRIDOR, SOURCE, type Corridor } from "@/lib/corridors";
+import { CORRIDORS, DEFAULT_CORRIDOR, SOURCE, describeAccount, type Corridor } from "@/lib/corridors";
 import { SAMPLE_CONTACTS, isSample, recipients as recipientStore, rememberRecipient, type Recipient } from "@/lib/local";
 import { narrateRfq } from "@/lib/narrate";
 import { recipientHash, savePending, type PendingTransfer } from "@/lib/transfer";
@@ -121,13 +120,18 @@ export default function Send() {
   const navigate = useNavigate();
   const savedOnly = recipientStore.use();
   // The contact book: people you've sent to, then sample contacts you haven't used yet.
-  const saved = [
+  const contacts = [
     ...savedOnly,
     ...SAMPLE_CONTACTS.filter((c) => !savedOnly.some((r) => r.clabe === c.clabe)),
   ];
-  const [corridor, setCorridor] = useState<Corridor>(DEFAULT_CORRIDOR);
+  const [corridor, setCorridorState] = useState<Corridor>(DEFAULT_CORRIDOR);
+  // Only the contacts in the country being sent to.
+  const saved = contacts.filter((r) => r.country === corridor.country);
+  const account = corridor.account;
   const [amount, setAmount] = useState("200");
-  const [pickedId, setPickedId] = useState<string | "new">(() => saved[0]?.id ?? "new");
+  const [pickedId, setPickedId] = useState<string | "new">(
+    () => contacts.find((r) => r.country === DEFAULT_CORRIDOR.country)?.id ?? "new",
+  );
   const [name, setName] = useState("");
   const [clabe, setClabe] = useState("");
   const [touched, setTouched] = useState(false);
@@ -135,12 +139,23 @@ export default function Send() {
   const [error, setError] = useState<string | null>(null);
   const [market, setMarket] = useState<Market | null>(null);
 
+  /** Switching country: its own contacts, an empty account field, its own market rate. */
+  function setCorridor(c: Corridor) {
+    if (c.country === corridor.country) return;
+    setCorridorState(c);
+    setPickedId(contacts.find((r) => r.country === c.country)?.id ?? "new");
+    setClabe("");
+    setTouched(false);
+    setError(null);
+    setMarket(null);
+  }
+
   // The live market rate, straight from the on-chain oracle (refreshed every 30 s).
   useEffect(() => {
     let alive = true;
     const load = () =>
       api
-        .market()
+        .market(corridor.currency)
         .then((m) => alive && setMarket(m))
         .catch(() => alive && setMarket(null));
     load();
@@ -149,7 +164,7 @@ export default function Send() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [corridor.currency]);
 
   const picked: Recipient | undefined = pickedId === "new" ? undefined : saved.find((r) => r.id === pickedId);
   const recipientName = picked?.name ?? name.trim();
@@ -158,11 +173,11 @@ export default function Send() {
   const errors = {
     amount: amountError(amount),
     name: picked ? null : recipientName.length < 3 ? "Enter the recipient's full name." : null,
-    clabe: picked ? null : clabeError(recipientClabe),
+    clabe: picked ? null : account.error(recipientClabe),
   };
   const valid = !errors.amount && !errors.name && !errors.clabe;
   const show = (field: keyof typeof errors) => touched && errors[field];
-  const detectedBank = bankName(clabe);
+  const detectedBank = account.detect?.(clabe) ?? null;
   const atMarket = market && !errors.amount ? marketLocal(toUnits(amount), BigInt(market.price)) : null;
   const ageMin = market ? Math.round(market.ageS / 60) : 0;
 
@@ -178,10 +193,11 @@ export default function Send() {
       const kp = await ensureReady(units, setBusy);
       setBusy("Collecting live offers…");
       const request: RfqRequestWithMode = {
-        // Real Stellar anchors bid with simulated prices (signed and bonded by test anchors).
+        // Mexico: real Stellar anchors' names with simulated prices. Other countries: labelled
+        // test providers. Either way each price is signed and bonded by a test anchor.
         mode: "anchors",
         corridor: corridor.corridor,
-        assetCode: ASSET_MXN,
+        assetCode: corridor.currency,
         sendUsdc: units.toString(),
         sender: kp.publicKey(),
         recipientCountry: corridor.country.toUpperCase(),
@@ -190,7 +206,7 @@ export default function Send() {
       const hash = await recipientHash(recipientName, recipientClabe);
       chainlog.add({
         title: "Recipient fingerprinted on this device",
-        detail: `sha256 ${hash.slice(0, 10)}…${hash.slice(-6)} · name and CLABE never leave the browser`,
+        detail: `sha256 ${hash.slice(0, 10)}…${hash.slice(-6)} · name and ${account.label} never leave the browser`,
       });
       const rfq = await api.rfq(request);
       narrateRfq(rfq);
@@ -204,7 +220,7 @@ export default function Send() {
         rfq,
         recipientHash: hash,
         recipientName,
-        recipientBank: `${bankName(recipientClabe) ?? "Bank"} ${maskClabe(recipientClabe)}`,
+        recipientBank: describeAccount(corridor, recipientClabe),
         country: corridor.country,
         countryName: corridor.countryName,
         currency: corridor.currency,
@@ -339,7 +355,7 @@ export default function Send() {
                 )}
               </span>
               <span className="block text-xs text-muted-foreground">
-                {bankName(r.clabe) ?? "Bank"} {maskClabe(r.clabe)}
+                {describeAccount(corridor, r.clabe)}
               </span>
             </span>
             <Flag country={r.country} className="size-5" />
@@ -389,35 +405,37 @@ export default function Send() {
             {show("name") && <p className="mt-1.5 text-sm text-bad">{errors.name}</p>}
           </div>
           <div>
-            <Label htmlFor="clabe">CLABE</Label>
+            <Label htmlFor="clabe">{account.label}</Label>
             <Input
               id="clabe"
-              inputMode="numeric"
+              inputMode={account.digitsOnly ? "numeric" : "text"}
               autoComplete="off"
-              maxLength={18}
-              placeholder="18-digit bank account number"
+              autoCapitalize="off"
+              spellCheck={false}
+              maxLength={account.maxLength}
+              placeholder={account.placeholder}
               value={clabe}
-              onChange={(e) => setClabe(e.target.value.replace(/\D/g, ""))}
+              onChange={(e) => setClabe(account.digitsOnly ? e.target.value.replace(/\D/g, "") : e.target.value.trim())}
               aria-invalid={show("clabe") ? "true" : undefined}
               className="money tracking-wide"
             />
             {!clabe && (
               <button
                 type="button"
-                onClick={() => setClabe("012180015412378003")}
+                onClick={() => setClabe(account.sample)}
                 className="mt-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                Use a sample account number
+                Use a sample {account.label}
               </button>
             )}
-            {clabe.length === 18 && !clabeError(clabe) ? (
+            {clabe && !account.error(clabe) ? (
               <motion.p
                 initial={{ scale: 0.5, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={bouncy}
                 className="mt-1.5 inline-flex origin-left items-center gap-1 text-sm text-good"
               >
-                <Check className="size-4" /> {detectedBank ?? "Valid account"}
+                <Check className="size-4" /> {detectedBank ?? "Looks right"}
               </motion.p>
             ) : show("clabe") ? (
               <p className="mt-1.5 text-sm text-bad">{errors.clabe}</p>

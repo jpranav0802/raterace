@@ -12,6 +12,7 @@ import Activity from "./pages/Activity";
 import Admin from "./pages/Admin";
 import Design from "./pages/Design";
 import Family from "./pages/Family";
+import Landing from "./pages/Landing";
 import Leaderboard from "./pages/Leaderboard";
 import Order from "./pages/Order";
 import Quotes from "./pages/Quotes";
@@ -28,7 +29,7 @@ const LIVE_ROUTES = /^\/(send|quotes|order|activity)(\/|$)/;
 
 function Logo() {
   return (
-    <NavLink to="/send" className="flex items-center gap-2.5" aria-label="RateRace home">
+    <NavLink to="/" className="flex items-center gap-2.5" aria-label="RateRace home">
       <LogoMark />
       <Wordmark className="text-[1.15rem]" />
     </NavLink>
@@ -119,7 +120,6 @@ function SenderApp() {
             exit={reduce ? undefined : { opacity: 0, y: -10, scale: 0.98, transition: { duration: 0.12 } }}
           >
           <Routes location={location}>
-            <Route path="/" element={<Navigate to="/send" replace />} />
             <Route path="/send" element={<Send />} />
             <Route path="/quotes" element={<Quotes />} />
             <Route path="/order/:id" element={<Order />} />
@@ -156,5 +156,7 @@ export default function App() {
       </Routes>
     );
   }
+  // The landing page has its own full-width layout.
+  if (pathname === "/") return <Landing />;
   return <SenderApp />;
 }

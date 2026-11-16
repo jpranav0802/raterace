@@ -7,9 +7,10 @@ import cors from "cors";
 import express from "express";
 import { Keypair } from "@stellar/stellar-sdk";
 import {
-  ASSET_MXN,
-  CORRIDOR_MX_SPEI,
+  CORRIDOR_IDS,
   PORTS,
+  corridorById,
+  scaleFee,
   bytesToHex,
   fromUnits,
   landedLocal,
@@ -72,7 +73,7 @@ function startAnchor(profile: AnchorProfile) {
     displayName: profile.displayName,
     address,
     signingKeyHex: quoteKey ? bytesToHex(quoteKey.rawPublicKey()) : "",
-    corridors: [CORRIDOR_MX_SPEI],
+    corridors: CORRIDOR_IDS,
     spreadBps: profile.spreadBps,
     payoutFeeLocal: profile.payoutFeeLocal.toString(),
   };
@@ -101,11 +102,11 @@ function startAnchor(profile: AnchorProfile) {
       if (body.sell_asset !== `stellar:USDC:${usdcIssuer}`) {
         throw new QuoteError(400, "sell_asset must be this network's USDC");
       }
-      if (body.buy_asset !== `iso4217:${ASSET_MXN}`) {
-        throw new QuoteError(400, "buy_asset must be iso4217:MXN");
-      }
-      if (ext.corridor !== CORRIDOR_MX_SPEI) {
-        throw new QuoteError(400, "Unsupported corridor");
+      const corridor = typeof ext.corridor === "string" ? corridorById(ext.corridor) : undefined;
+      if (!corridor) throw new QuoteError(400, "Unsupported corridor");
+      const assetCode = corridor.currency;
+      if (body.buy_asset !== `iso4217:${assetCode}`) {
+        throw new QuoteError(400, `buy_asset must be iso4217:${assetCode} for ${corridor.id}`);
       }
       if (typeof ext.request_id !== "string" || !/^[0-9a-f]{64}$/.test(ext.request_id)) {
         throw new QuoteError(400, "raterace.request_id must be 64 lowercase hex characters");
@@ -127,11 +128,15 @@ function startAnchor(profile: AnchorProfile) {
       const [anchorTx, configTx, price] = await Promise.all([
         clients.raterace.get_anchor({ anchor: address }),
         clients.raterace.get_config(),
-        oraclePrice(clients.oracle, ASSET_MXN),
+        oraclePrice(clients.oracle, assetCode),
       ]);
       const me = anchorTx.result.unwrap();
       const chainConfig = configTx.result.unwrap();
       if (!me.active) throw new QuoteError(503, "Anchor is suspended");
+      // The contract refuses a corridor this anchor isn't registered for; don't sign one.
+      if (!me.corridors.map(String).includes(corridor.id)) {
+        throw new QuoteError(400, "This anchor is not registered for that corridor");
+      }
       const reserve = (sendUsdc * BigInt(chainConfig.bond_ratio_bps)) / BPS;
       if (BigInt(me.bond) - BigInt(me.reserved) < reserve) {
         throw new QuoteError(503, "Not enough free bond for this amount");
@@ -142,7 +147,9 @@ function startAnchor(profile: AnchorProfile) {
       const standIn = ext.stand_in as StandIn | undefined;
       if (standIn && !STAND_IN) throw new QuoteError(400, "Stand-in quotes are turned off");
       let landed: bigint;
-      let fees = { spreadBps: profile.spreadBps, payoutFeeLocal: profile.payoutFeeLocal.toString() };
+      // The profile's fee is defined in pesos; scale it to a similar value in this currency.
+      const payoutFee = scaleFee(profile.payoutFeeLocal, assetCode);
+      let fees = { spreadBps: profile.spreadBps, payoutFeeLocal: payoutFee.toString() };
       if (standIn) {
         if (typeof standIn.landed_local !== "string" || !/^\d+$/.test(standIn.landed_local)) {
           throw new QuoteError(400, "stand_in.landed_local must be an integer string");
@@ -153,7 +160,7 @@ function startAnchor(profile: AnchorProfile) {
         if (landed > (market * 105n) / 100n) throw new QuoteError(400, "stand_in price is not plausible");
         fees = { spreadBps: Math.max(0, Math.round(Number(standIn.spread_bps) || 0)), payoutFeeLocal: String(standIn.fee_local ?? "0") };
       } else {
-        landed = landedLocal(sendUsdc, price.price, profile.spreadBps, profile.payoutFeeLocal);
+        landed = landedLocal(sendUsdc, price.price, profile.spreadBps, payoutFee);
       }
       if (landed <= 0n) throw new QuoteError(400, "Amount too small to cover the payout fee");
 
@@ -162,8 +169,8 @@ function startAnchor(profile: AnchorProfile) {
         anchorName: profile.name,
         displayName: standIn ? String(standIn.provider) : profile.displayName,
         requestId: ext.request_id,
-        corridor: CORRIDOR_MX_SPEI,
-        assetCode: ASSET_MXN,
+        corridor: corridor.id,
+        assetCode,
         sendUsdc: sendUsdc.toString(),
         landedLocal: landed.toString(),
         expiresAt,
@@ -174,7 +181,7 @@ function startAnchor(profile: AnchorProfile) {
       const digest = await quoteDigest(clients.raterace, toContractQuote(unsigned));
       const signature = bytesToHex(quoteKey.sign(digest));
 
-      const fee = fromUnits(profile.payoutFeeLocal);
+      const fee = fromUnits(payoutFee);
       res.json({
         // SEP-38 firm quote fields
         id: ext.request_id,
@@ -187,7 +194,7 @@ function startAnchor(profile: AnchorProfile) {
         fee: {
           total: fee,
           asset: body.buy_asset,
-          details: [{ name: "SPEI payout fee", amount: fee }],
+          details: [{ name: `${corridor.method} payout fee`, amount: fee }],
         },
         // RateRace extension: the signed, all-in landed amount
         raterace: { quote: unsigned, signature },

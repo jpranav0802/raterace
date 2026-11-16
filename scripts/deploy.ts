@@ -19,7 +19,16 @@ import {
   TransactionBuilder,
   rpc,
 } from "@stellar/stellar-sdk";
-import { PORTS, TESTNET, explorerAccount, explorerContract, type Deployment } from "@raterace/shared";
+import {
+  CORRIDORS as SHARED_CORRIDORS,
+  CORRIDOR_IDS,
+  PORTS,
+  TESTNET,
+  explorerAccount,
+  explorerContract,
+  fallbackOraclePrice,
+  type Deployment,
+} from "@raterace/shared";
 import { REPO_ROOT } from "@raterace/shared/node";
 
 // ---------- settings ----------
@@ -55,7 +64,8 @@ const CONFIG = {
 const SENDER_USDC = 10_000;
 const ANCHOR_USDC = 5_000;
 const ANCHOR_BOND = 2_000;
-const CORRIDORS = ["MX_SPEI"];
+// Every mock anchor is registered for every corridor in the shared table.
+const CORRIDORS = CORRIDOR_IDS;
 
 const ANCHORS = [
   { name: "alpha", displayName: "Alpha" },
@@ -257,6 +267,14 @@ async function main() {
   console.log(`   ${oracleId}`);
   invoke(oracleId, keys.ADMIN, "set_price", { asset: { Other: "MXN" }, price: MXN_PRICE });
   console.log(`   MXN price set to ${Number(MXN_PRICE) / 1e14} USD (${(1e14 / Number(MXN_PRICE)).toFixed(2)} MXN per USD)`);
+  // The other corridors' currencies start at a recorded fallback rate (see
+  // packages/shared/src/corridors.ts); the oracle keeper replaces each with a live rate.
+  for (const c of SHARED_CORRIDORS) {
+    if (c.currency === "MXN") continue;
+    const price = fallbackOraclePrice(c.currency)!.toString();
+    invoke(oracleId, keys.ADMIN, "set_price", { asset: { Other: c.currency }, price });
+    console.log(`   ${c.currency} price set (${c.fallbackPerUsd} ${c.currency} per USD, fallback until the keeper runs)`);
+  }
 
   step("Deploying RateRace contract");
   const config = { admin: keys.ADMIN.publicKey(), usdc: usdcId, oracle: oracleId, ...CONFIG };
