@@ -87,3 +87,15 @@ export function rememberTransfer(t: TransferRecord) {
 
 /** Show the "On Stellar" network view next to the app. */
 export const networkView = store<boolean>("raterace_network_view", true);
+
+/**
+ * Sample contacts so the demo can be run without typing an account number. The CLABEs are
+ * well-formed (real bank codes, valid check digit) but made up; they are labelled "Sample".
+ */
+export const SAMPLE_CONTACTS: Recipient[] = [
+  { id: "sample:rosa", name: "Rosa Hernández", clabe: "012180015412378003", country: "mx", lastSentAt: 0 },
+  { id: "sample:luis", name: "Luis García", clabe: "072180009873214008", country: "mx", lastSentAt: 0 },
+  { id: "sample:maria", name: "María López", clabe: "014180065501939000", country: "mx", lastSentAt: 0 },
+];
+
+export const isSample = (r: Recipient) => r.id.startsWith("sample:");

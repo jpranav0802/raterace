@@ -12,7 +12,7 @@ import { api, type Market, type RfqRequestWithMode } from "@/lib/api";
 import { chainlog } from "@/lib/chainlog";
 import { bankName, clabeError, maskClabe } from "@/lib/clabe";
 import { CORRIDORS, DEFAULT_CORRIDOR, SOURCE, type Corridor } from "@/lib/corridors";
-import { recipients as recipientStore, rememberRecipient, type Recipient } from "@/lib/local";
+import { SAMPLE_CONTACTS, isSample, recipients as recipientStore, rememberRecipient, type Recipient } from "@/lib/local";
 import { narrateRfq } from "@/lib/narrate";
 import { recipientHash, savePending, type PendingTransfer } from "@/lib/transfer";
 import { cn } from "@/lib/utils";
@@ -111,7 +111,12 @@ function CurrencyPicker({ value, onChange }: { value: Corridor; onChange: (c: Co
 
 export default function Send() {
   const navigate = useNavigate();
-  const saved = recipientStore.use();
+  const savedOnly = recipientStore.use();
+  // The contact book: people you've sent to, then sample contacts you haven't used yet.
+  const saved = [
+    ...savedOnly,
+    ...SAMPLE_CONTACTS.filter((c) => !savedOnly.some((r) => r.clabe === c.clabe)),
+  ];
   const [corridor, setCorridor] = useState<Corridor>(DEFAULT_CORRIDOR);
   const [amount, setAmount] = useState("200");
   const [pickedId, setPickedId] = useState<string | "new">(() => saved[0]?.id ?? "new");
@@ -239,10 +244,6 @@ export default function Send() {
         </div>
 
         <div className="flex items-center gap-2 border-y bg-secondary/30 px-5 py-2.5 text-xs text-muted-foreground">
-          <span className="relative flex size-1.5">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-70" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-good" />
-          </span>
           {market ? (
             <span>
               <span className="money text-foreground">
@@ -276,7 +277,10 @@ export default function Send() {
       </div>
 
       {/* ---- recipient ---- */}
-      <h2 className="mt-9 text-lg">Recipient</h2>
+      <div className="mt-9 flex items-baseline justify-between">
+        <h2 className="text-lg">Recipient</h2>
+        <span className="text-xs text-muted-foreground">Contacts</span>
+      </div>
       <div role="radiogroup" aria-label="Recipient" className="mt-3 flex flex-col gap-2">
         {saved.map((r) => (
           <button
@@ -294,7 +298,12 @@ export default function Send() {
               {initials(r.name)}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium">{r.name}</span>
+              <span className="flex items-center gap-2">
+                <span className="truncate font-medium">{r.name}</span>
+                {isSample(r) && (
+                  <span className="rounded-full border px-1.5 py-px text-[0.6rem] text-muted-foreground">Sample</span>
+                )}
+              </span>
               <span className="block text-xs text-muted-foreground">
                 {bankName(r.clabe) ?? "Bank"} {maskClabe(r.clabe)}
               </span>
@@ -315,12 +324,13 @@ export default function Send() {
           <span className="flex size-9 items-center justify-center rounded-full bg-secondary">
             <Plus className="size-4" />
           </span>
-          <span className="font-medium">New recipient</span>
+          <span className="flex-1 font-medium">New recipient</span>
+          <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", pickedId === "new" && "rotate-180")} />
         </button>
       </div>
 
       {pickedId === "new" && (
-        <div className="mt-4 flex flex-col gap-4 rounded-xl border bg-card p-4">
+        <div className="mt-2 flex flex-col gap-4 rounded-xl border bg-card p-4">
           <div>
             <Label htmlFor="name">Full name</Label>
             <Input
@@ -346,6 +356,15 @@ export default function Send() {
               aria-invalid={show("clabe") ? "true" : undefined}
               className="money tracking-wide"
             />
+            {!clabe && (
+              <button
+                type="button"
+                onClick={() => setClabe("012180015412378003")}
+                className="mt-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                Use a sample account number
+              </button>
+            )}
             {clabe.length === 18 && !clabeError(clabe) ? (
               <p className="mt-1.5 inline-flex items-center gap-1 text-sm text-good">
                 <Check className="size-4" /> {detectedBank ?? "Valid account"}

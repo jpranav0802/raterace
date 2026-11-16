@@ -90,14 +90,14 @@ export default function App() {
             type="button"
             onClick={() => networkView.set(!showNetwork)}
             aria-pressed={showNetwork}
-            title={showNetwork ? "Hide the live network view" : "Show what happens on Stellar"}
+            title={showNetwork ? "Hide the on-chain record" : "Show the on-chain record"}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
               showNetwork ? "border-good/40 text-good" : "text-muted-foreground hover:text-foreground",
             )}
           >
             <Radio className="size-3.5" />
-            <span className="hidden sm:inline">Network view</span>
+            <span className="hidden sm:inline">On-chain record</span>
           </button>
         </div>
       </header>

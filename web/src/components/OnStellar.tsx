@@ -1,53 +1,71 @@
-// "On Stellar, live": the machinery behind the simple app, shown as it happens.
-// Desktop: a sticky column next to the app. Phone: a pill at the bottom that opens a sheet.
+// "On-chain record": the public record behind the simple app, written as it happens.
+// Every line comes from a real response (a transaction hash, a contract check, a signature
+// verified against a registered key). Desktop: a column next to the app. Phone: a bottom sheet.
 import { explorerTx } from "@raterace/shared";
-import { ArrowUpRight, Check, ChevronDown, Loader2, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, FileText, Loader2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { chainlog, useChainLog, type LogEntry } from "@/lib/chainlog";
 import { config } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
+/** What the record will contain, shown before the first transfer. */
+const PREVIEW = [
+  { title: "Account set up", detail: "Created on Stellar; network fees paid by RateRace" },
+  { title: "Offers verified", detail: "Each provider's signature checked against its registered key" },
+  { title: "Money in escrow", detail: "Held by the RateRace contract, not by a company" },
+  { title: "Paid out", detail: "Provider confirms delivery; its deposit is released" },
+];
+
 function time(ms: number) {
   return new Date(ms).toLocaleTimeString("en-US", { hour12: false });
+}
+
+function Marker({ status, n }: { status: LogEntry["status"] | "preview"; n?: number }) {
+  return (
+    <span
+      className={cn(
+        "relative z-10 mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-full border bg-card",
+        status === "done" && "border-foreground/30 text-foreground",
+        status === "pending" && "border-border text-muted-foreground",
+        status === "failed" && "border-bad/50 text-bad",
+        status === "preview" && "border-muted-foreground/40 text-[0.6rem] text-muted-foreground",
+      )}
+    >
+      {status === "done" && <Check className="size-2.5" strokeWidth={3} />}
+      {status === "pending" && <Loader2 className="size-2.5 animate-spin" />}
+      {status === "failed" && <X className="size-2.5" strokeWidth={3} />}
+      {status === "preview" && n}
+    </span>
+  );
 }
 
 function Entry({ e }: { e: LogEntry }) {
   const reduce = useReducedMotion();
   return (
     <motion.li
-      layout={!reduce}
-      initial={reduce ? false : { opacity: 0, y: 8, filter: "blur(4px)" }}
-      animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-      transition={{ duration: 0.35, ease: [0.2, 0.8, 0.2, 1] }}
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.25 }}
       className="relative flex gap-3 pb-4 last:pb-0"
     >
-      <span
-        className={cn(
-          "relative z-10 mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full",
-          e.status === "done" && "bg-good/15 text-good",
-          e.status === "pending" && "bg-secondary text-muted-foreground",
-          e.status === "failed" && "bg-bad/15 text-bad",
-        )}
-      >
-        {e.status === "done" && <Check className="size-3" strokeWidth={3} />}
-        {e.status === "pending" && <Loader2 className="size-3 animate-spin" />}
-        {e.status === "failed" && <X className="size-3" strokeWidth={3} />}
-      </span>
+      <Marker status={e.status} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="text-sm leading-snug font-medium">{e.title}</p>
-          <span className="money shrink-0 font-mono text-[0.7rem] text-muted-foreground">{time(e.at)}</span>
+          <p className={cn("text-[0.84rem] leading-snug", e.status === "failed" && "text-bad")}>{e.title}</p>
+          <span className="money shrink-0 font-mono text-[0.68rem] text-muted-foreground">{time(e.at)}</span>
         </div>
-        {e.detail && <p className="mt-0.5 font-mono text-[0.72rem] leading-relaxed break-words text-muted-foreground">{e.detail}</p>}
+        {e.detail && (
+          <p className="mt-0.5 font-mono text-[0.7rem] leading-relaxed break-words text-muted-foreground">{e.detail}</p>
+        )}
         {e.hash && (
           <a
             href={explorerTx(e.hash, config.explorerUrl)}
             target="_blank"
             rel="noreferrer"
-            className="mt-1 inline-flex items-center gap-0.5 font-mono text-[0.72rem] text-foreground/80 underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
+            className="mt-1 inline-flex items-center gap-0.5 font-mono text-[0.7rem] text-muted-foreground underline decoration-border underline-offset-2 hover:text-foreground"
           >
-            tx {e.hash.slice(0, 8)}…{e.hash.slice(-4)}
+            {e.hash.slice(0, 10)}…{e.hash.slice(-6)}
             <ArrowUpRight className="size-3" />
           </a>
         )}
@@ -61,16 +79,31 @@ function Feed({ entries }: { entries: LogEntry[] }) {
   useEffect(() => {
     end.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [entries.length]);
+
   if (entries.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Start a transfer. Every step the network takes shows up here, with a link to the public record.
-      </p>
+      <div>
+        <ol className="relative">
+          <span aria-hidden="true" className="absolute top-2 bottom-2 left-[8.5px] w-px bg-border" />
+          {PREVIEW.map((p, i) => (
+            <li key={p.title} className="relative flex gap-3 pb-4 last:pb-0">
+              <Marker status="preview" n={i + 1} />
+              <div>
+                <p className="text-[0.84rem] text-muted-foreground">{p.title}</p>
+                <p className="mt-0.5 text-[0.72rem] text-muted-foreground/70">{p.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-5 text-xs text-muted-foreground">
+          Each step is recorded as it happens, with a link to its public record on Stellar Expert.
+        </p>
+      </div>
     );
   }
   return (
     <ol className="relative">
-      <span aria-hidden="true" className="absolute top-2 bottom-2 left-[9.5px] w-px bg-border" />
+      <span aria-hidden="true" className="absolute top-2 bottom-2 left-[8.5px] w-px bg-border" />
       <AnimatePresence initial={false}>
         {entries.map((e) => (
           <Entry key={e.id} e={e} />
@@ -85,34 +118,30 @@ function Header({ entries }: { entries: LogEntry[] }) {
   const sponsored = entries.filter((e) => e.sponsored && e.status === "done").length;
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <p className="flex items-center gap-2 text-sm font-medium">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-60" />
-            <span className="relative inline-flex size-2 rounded-full bg-good" />
-          </span>
-          On Stellar, live
-        </p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <FileText className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-medium tracking-normal">On-chain record</h2>
+          <span className="rounded border px-1.5 py-px font-mono text-[0.62rem] text-muted-foreground">testnet</span>
+        </div>
         {entries.length > 0 && (
-          <button
-            type="button"
-            onClick={() => chainlog.clear()}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
+          <button type="button" onClick={() => chainlog.clear()} className="text-xs text-muted-foreground hover:text-foreground">
             Clear
           </button>
         )}
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="rounded-lg bg-secondary/60 px-3 py-2">
-          <p className="text-[0.7rem] text-muted-foreground">Network fees you paid</p>
-          <p className="money text-lg font-semibold text-good">$0.00</p>
+      <dl className="mt-4 grid grid-cols-2 divide-x rounded-lg border text-xs">
+        <div className="px-3 py-2">
+          <dt className="text-muted-foreground">Network fees you paid</dt>
+          <dd className="money mt-0.5 text-sm font-medium">$0.00</dd>
         </div>
-        <div className="rounded-lg bg-secondary/60 px-3 py-2">
-          <p className="text-[0.7rem] text-muted-foreground">Transactions we sponsored</p>
-          <p className="money text-lg font-semibold">{sponsored}</p>
+        <div className="px-3 py-2">
+          <dt className="text-muted-foreground">Sponsored by RateRace</dt>
+          <dd className="money mt-0.5 text-sm font-medium">
+            {sponsored} {sponsored === 1 ? "transaction" : "transactions"}
+          </dd>
         </div>
-      </div>
+      </dl>
     </div>
   );
 }
@@ -121,7 +150,10 @@ function Header({ entries }: { entries: LogEntry[] }) {
 export function OnStellarPanel() {
   const entries = useChainLog();
   return (
-    <aside aria-label="What happened on Stellar" className="sticky top-6 hidden max-h-[calc(100dvh-3rem)] flex-col rounded-xl border bg-card/60 p-5 lg:flex">
+    <aside
+      aria-label="On-chain record"
+      className="sticky top-20 hidden max-h-[calc(100dvh-6rem)] flex-col rounded-2xl border bg-card p-5 lg:flex"
+    >
       <Header entries={entries} />
       <div className="mt-5 -mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
         <Feed entries={entries} />
@@ -130,7 +162,7 @@ export function OnStellarPanel() {
   );
 }
 
-/** Phone: a pill that opens a bottom sheet. */
+/** Phone: a bar at the bottom that opens a sheet. */
 export function OnStellarSheet() {
   const entries = useChainLog();
   const [open, setOpen] = useState(false);
@@ -140,16 +172,13 @@ export function OnStellarSheet() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-[28rem] items-center gap-3 rounded-full border bg-card/90 px-4 py-2.5 text-left shadow-2xl backdrop-blur"
+        className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-[28rem] items-center gap-3 rounded-xl border bg-card/95 px-4 py-2.5 text-left shadow-xl backdrop-blur"
       >
-        <span className="relative flex size-2 shrink-0">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-60" />
-          <span className="relative inline-flex size-2 rounded-full bg-good" />
+        <FileText className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm">{last ? last.title : "On-chain record"}</span>
+        <span className="money shrink-0 text-xs text-muted-foreground">
+          {entries.length} {entries.length === 1 ? "step" : "steps"}
         </span>
-        <span className="min-w-0 flex-1 truncate text-sm">
-          {last ? last.title : "On Stellar, live"}
-        </span>
-        <span className="money shrink-0 text-xs text-muted-foreground">{entries.length} steps</span>
       </button>
       <AnimatePresence>
         {open && (
@@ -163,19 +192,14 @@ export function OnStellarSheet() {
             />
             <motion.div
               role="dialog"
-              aria-label="What happened on Stellar"
+              aria-label="On-chain record"
               className="fixed inset-x-0 bottom-0 z-50 flex max-h-[80dvh] flex-col rounded-t-2xl border-t bg-card p-5"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 30, stiffness: 300 }}
             >
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Close"
-                className="mx-auto -mt-2 mb-3 flex text-muted-foreground"
-              >
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="mx-auto -mt-2 mb-3 flex text-muted-foreground">
                 <ChevronDown className="size-5" />
               </button>
               <Header entries={entries} />

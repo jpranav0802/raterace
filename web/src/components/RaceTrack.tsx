@@ -300,10 +300,7 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
             </>
           ) : (
             <>
-              <span className="relative flex size-2">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-70" />
-                <span className="relative inline-flex size-2 rounded-full bg-good" />
-              </span>
+              <span className="size-3.5 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-foreground" />
               {market ? `${lanes.length} providers are bidding…` : "Providers are racing…"}
             </>
           )}
