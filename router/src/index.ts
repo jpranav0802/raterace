@@ -64,6 +64,12 @@ const QUOTE_LIFETIME_S = 120;
 const ANCHOR_TIMEOUT_MS = 4_000;
 const MAX_MARKUP_BPS = 300;
 const ONBOARD_USDC = "1000";
+/**
+ * Test anchors allowed to stand in for real providers in market mode. Gamma is left out on
+ * purpose: its payout worker never pays (it is the demo's failing provider), and a real
+ * provider's price must not look like it failed because of who stood in for it.
+ */
+const MARKET_STAND_INS = (process.env.MARKET_STAND_INS ?? "alpha,beta").split(",").map((s) => s.trim());
 
 const { raterace, oracle } = makeClients({
   rpcUrl: cfg.rpcUrl,
@@ -358,7 +364,9 @@ async function marketBids(ctx: RfqCtx, audit: AuditRow[]) {
     raterace.get_config().then((t) => t.result.unwrap()),
   ]);
   const reserve = (ctx.sendUsdc * BigInt(chainConfig.bond_ratio_bps)) / 10_000n;
-  const free = anchorsOnChain.map((on) => (on.active ? BigInt(on.bond) - BigInt(on.reserved) : 0n));
+  const free = anchorsOnChain.map((on, i) =>
+    on.active && MARKET_STAND_INS.includes(ANCHORS[i].name) ? BigInt(on.bond) - BigInt(on.reserved) : 0n,
+  );
   const mid = localPerUsd(ctx.price.price);
 
   const jobs: Promise<RankedQuote | null>[] = [];

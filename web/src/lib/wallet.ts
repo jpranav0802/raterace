@@ -109,3 +109,13 @@ export async function ensureReady(sendUsdcUnits: bigint, onStep?: (text: string)
   }
   return kp;
 }
+
+let usdcAsset: { code: string; issuer: string } | null = null;
+
+/** The demo account's USDC balance (USDC units), or 0 if the account doesn't exist yet. */
+export async function usdcBalanceUnits(): Promise<bigint> {
+  usdcAsset ??= (await api.health()).usdc;
+  const account = await loadAccount(demoKeypair().publicKey());
+  if (!account) return 0n;
+  return usdcBalance(account, usdcAsset.code, usdcAsset.issuer) ?? 0n;
+}

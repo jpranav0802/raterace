@@ -8,6 +8,11 @@ export interface PendingTransfer {
   /** sha256(JSON.stringify({ name, clabe })), hex. The raw details never leave the browser. */
   recipientHash: string;
   recipientName: string;
+  /** e.g. "BBVA México ···0008" (never the full account number). */
+  recipientBank?: string;
+  country?: string;
+  countryName?: string;
+  currency?: string;
 }
 
 const KEY = "raterace_pending_transfer";

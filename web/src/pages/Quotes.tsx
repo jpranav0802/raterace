@@ -6,7 +6,9 @@ import { useCallback, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
 import { LockedCelebration, type LockedInfo } from "@/components/LockedCelebration";
+import { Flag } from "@/components/Flag";
 import { PageHeader } from "@/components/PageHeader";
+import { Stepper } from "@/components/Stepper";
 import { RaceTrack } from "@/components/RaceTrack";
 import { Receipt } from "@/components/Receipt";
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,7 @@ import { chainlog } from "@/lib/chainlog";
 import { config } from "@/lib/config";
 import { errorMessage } from "@/lib/format";
 import { narrateRfq } from "@/lib/narrate";
+import { rememberTransfer } from "@/lib/local";
 import { clearPending, loadPending, savePending, type PendingTransfer } from "@/lib/transfer";
 import { demoKeypair } from "@/lib/wallet";
 
@@ -186,6 +189,18 @@ export default function Quotes() {
     setBusy(`Locking ${picked.displayName}'s price…`);
     try {
       const info = await lockOffer(transfer, picked, standIn);
+      rememberTransfer({
+        orderId: info.orderId,
+        hash: info.hash,
+        at: Date.now(),
+        recipientName: transfer.recipientName,
+        country: transfer.country ?? "mx",
+        currency: transfer.currency ?? "MXN",
+        sendUsdc: picked.sendUsdc,
+        landedLocal: picked.landedLocal,
+        provider: picked.displayName,
+        standIn: standIn?.displayName,
+      });
       clearPending();
       setLocked(info);
     } catch (e) {
@@ -201,23 +216,29 @@ export default function Quotes() {
   return (
     <div>
       {locked && <LockedCelebration info={locked} />}
-      <PageHeader
-        title="The race is on"
-        lead={
-          liveMode ? (
-            <>
-              Today's live prices from {rfq.audit?.length ?? 0} real providers compete to send{" "}
-              <span className="money text-foreground">{formatUsd(send)}</span> to {transfer.recipientName}. Anything more
-              than 3% below the market rate is refused.
-            </>
-          ) : (
-            <>
-              Licensed providers compete to deliver the most pesos for{" "}
-              <span className="money text-foreground">{formatUsd(send)}</span> to {transfer.recipientName}.
-            </>
-          )
-        }
-      />
+      <Stepper current={1} />
+
+      <div className="mt-6 flex items-center gap-3 rounded-2xl border bg-card px-4 py-3">
+        <Flag country={transfer.country ?? "mx"} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">
+            <span className="money">{formatUsd(send)}</span> to {transfer.recipientName}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            {transfer.recipientBank ?? `${transfer.countryName ?? "Mexico"} · bank deposit`}
+          </p>
+        </div>
+        <Link to="/send" className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+          Edit
+        </Link>
+      </div>
+
+      <h1 className="mt-7 text-[1.9rem]">Choose an offer</h1>
+      <p className="mt-2 mb-6 text-muted-foreground">
+        {liveMode
+          ? `Live prices from ${rfq.audit?.length ?? 0} providers for this exact transfer, best first. Offers more than 3% below the market rate are refused.`
+          : "Signed offers from licensed providers for this exact transfer, best first."}
+      </p>
 
       <RaceTrack
         raceId={rfq.requestId}
