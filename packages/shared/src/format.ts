@@ -1,4 +1,5 @@
 import { AMOUNT_DECIMALS } from "./constants";
+import { corridorByCurrency } from "./corridors";
 
 /** "200" or "200.5" -> 2000000000n / 2005000000n (7 decimals). Throws on bad input. */
 export function toUnits(decimal: string, decimals: number = AMOUNT_DECIMALS): bigint {
@@ -35,9 +36,15 @@ export function formatUsd(units: bigint | string): string {
   return `$${withCommas(fromUnits(units))}`;
 }
 
+/** 39370000000n, "MXN" -> "MX$3,937.00". An unknown currency prints its code: "XYZ 12.00". */
+export function formatLocal(units: bigint | string, currency: string): string {
+  const symbol = corridorByCurrency(currency)?.symbol ?? `${currency} `;
+  return `${symbol}${withCommas(fromUnits(units))}`;
+}
+
 /** 39370000000n -> "MX$3,937.00" */
 export function formatMxn(units: bigint | string): string {
-  return `MX$${withCommas(fromUnits(units))}`;
+  return formatLocal(units, "MXN");
 }
 
 /** 120 -> "1.20%" */

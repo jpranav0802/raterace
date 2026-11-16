@@ -1,5 +1,5 @@
 // Turns real router/contract responses into "On Stellar" log lines.
-import { formatBps, formatMxn } from "@raterace/shared";
+import { formatBps, formatLocal } from "@raterace/shared";
 import type { RfqWithAudit } from "./api";
 import { chainlog } from "./chainlog";
 
@@ -16,22 +16,28 @@ const REASON: Record<string, string> = {
 };
 
 export function narrateRfq(rfq: RfqWithAudit) {
+  const currency = rfq.assetCode ?? rfq.quotes[0]?.assetCode ?? "MXN";
+  const local = (units: bigint | string) => formatLocal(units, currency);
+  /** Only Mexico's board names real Stellar anchors. */
+  const realNames = (rfq.corridor ?? rfq.quotes[0]?.corridor ?? "MX_SPEI") === "MX_SPEI";
   const ageMin = Math.max(0, Math.round((Date.now() / 1000 - rfq.oracle.timestamp) / 60));
   chainlog.add({
     title: "Market rate read from the on-chain oracle",
-    detail: `1 USD = ${rfq.oracle.mxnPerUsd.toFixed(4)} MXN · ${ageMin} min old (limit ${MAX_ORACLE_AGE_MIN})`,
+    detail: `1 USD = ${rfq.oracle.mxnPerUsd.toFixed(4)} ${currency} · ${ageMin} min old (limit ${MAX_ORACLE_AGE_MIN})`,
   });
   const rows = rfq.audit ?? [];
   if (rfq.mode === "anchors") {
     chainlog.add({
-      title: `${rows.length} Stellar anchors asked for signed offers`,
+      title: realNames
+        ? `${rows.length} Stellar anchors asked for signed offers`
+        : `${rows.length} test providers asked for signed offers`,
       detail: "same request to everyone · prices simulated for the demo",
     });
     for (const a of rows) {
       const q = rfq.quotes.find((x) => x.anchorName === a.name);
       if (q) {
         chainlog.add({
-          title: `${a.displayName} offers ${formatMxn(q.landedLocal)}`,
+          title: `${a.displayName} offers ${local(q.landedLocal)}`,
           detail: `${formatBps(q.markupBps)} below market · signed & bonded by test anchor ${a.standIn?.displayName} · signature ✓`,
         });
       } else {
@@ -49,7 +55,7 @@ export function narrateRfq(rfq: RfqWithAudit) {
       const q = rfq.quotes.find((x) => x.anchorName === a.name);
       if (q) {
         chainlog.add({
-          title: `${a.displayName} bids ${formatMxn(q.landedLocal)}`,
+          title: `${a.displayName} bids ${local(q.landedLocal)}`,
           detail: `${q.markupBps < 0 ? "above market" : `${formatBps(q.markupBps)} below market`} · signed & bonded by test provider ${a.standIn?.displayName} · signature ✓ on-chain key`,
         });
       } else {
@@ -70,7 +76,7 @@ export function narrateRfq(rfq: RfqWithAudit) {
     const q = rfq.quotes.find((x) => x.anchorName === a.name);
     if (q) {
       chainlog.add({
-        title: `${a.displayName} offers ${formatMxn(q.landedLocal)}`,
+        title: `${a.displayName} offers ${local(q.landedLocal)}`,
         detail: `signature ✓ against ${a.displayName}'s on-chain key · ${formatBps(q.markupBps)} below market · ${a.ms} ms`,
       });
     } else {

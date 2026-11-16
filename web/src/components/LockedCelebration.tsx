@@ -1,6 +1,6 @@
 // The moment the offer is locked: money is in escrow, the provider's bond is at stake,
 // and the sender paid nothing in fees. Every number comes from the order read back on-chain.
-import { formatMxn, fromUnits } from "@raterace/shared";
+import { formatLocal, fromUnits } from "@raterace/shared";
 import { motion, useReducedMotion } from "motion/react";
 import { Link } from "react-router-dom";
 import { Confetti } from "@/components/Confetti";
@@ -16,6 +16,8 @@ export interface LockedInfo {
   standIn?: string;
   recipientName: string;
   landedLocal: string;
+  /** Currency the family receives (ISO code); MXN if absent. */
+  currency?: string;
   sendUsdc: string;
   /** From the on-chain order, when it could be read back. */
   reservedBond?: string;
@@ -97,7 +99,7 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ type: "spring", stiffness: 500, damping: 12, delay: 0.45 }}
         >
-          {formatMxn(info.landedLocal)}
+          {formatLocal(info.landedLocal, info.currency ?? "MXN")}
         </motion.h2>
         <motion.p
           className="mt-2 text-lg"

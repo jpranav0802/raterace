@@ -5,7 +5,7 @@
 // Market mode: the bidders are real providers at their live public prices; each allowed price
 // is signed and bonded on testnet by a test provider standing in (shown on the lane).
 // Simulated mode: the bidders are the test providers with their own prices.
-import { formatBps, formatMxn, type RankedQuote } from "@raterace/shared";
+import { corridorByCurrency, formatBps, formatLocal, type RankedQuote } from "@raterace/shared";
 import { Check, RotateCcw, ShieldCheck, Trophy } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
@@ -75,8 +75,10 @@ function useCountUp(target: number, from: number, delay: number, duration: numbe
   return value;
 }
 
-function mxn(n: number) {
-  return `MX$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** A plain number as money in `currency`, e.g. 3937 -> "MX$3,937.00". */
+function money(n: number, currency: string) {
+  const symbol = corridorByCurrency(currency)?.symbol ?? `${currency} `;
+  return `${symbol}${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function LaneRow({
@@ -89,8 +91,10 @@ function LaneRow({
   runKey,
   marketNum,
   limitBps,
+  currency,
 }: {
   lane: Lane;
+  currency: string;
   limitBps: number;
   index: number;
   best: boolean;
@@ -101,6 +105,8 @@ function LaneRow({
   marketNum: number;
 }) {
   const reduce = useReducedMotion();
+  const cash = (n: number) => money(n, currency);
+  const local = (units: bigint | string) => formatLocal(units, currency);
   const delay = launchDelay(lane, index);
   /** Selectable: a signed offer within the sender's own limit. */
   const valid = !!lane.quote && lane.markupBps <= limitBps;
@@ -115,9 +121,9 @@ function LaneRow({
     lane.landed > 0
       ? finished || lane.landed - shown < 0.005
         ? lane.units
-          ? formatMxn(lane.units)
-          : mxn(lane.landed)
-        : mxn(shown)
+          ? local(lane.units)
+          : cash(lane.landed)
+        : cash(shown)
       : "—";
 
   let detail: string;
@@ -256,10 +262,23 @@ interface RaceTrackProps {
   raceId: string;
   /** The sender's own limit: offers further below market than this can't be picked. */
   limitBps?: number;
+  /** Currency the family receives (ISO code). */
+  currency?: string;
 }
 
-export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, raceId, limitBps = 300 }: RaceTrackProps) {
+export function RaceTrack({
+  quotes,
+  audit,
+  marketLocal,
+  selectedId,
+  onSelect,
+  raceId,
+  limitBps = 300,
+  currency = "MXN",
+}: RaceTrackProps) {
   const reduce = useReducedMotion();
+  const cash = (n: number) => money(n, currency);
+  const local = (units: bigint | string) => formatLocal(units, currency);
   const [runKey, setRunKey] = useState(0);
   const [finished, setFinished] = useState(!!reduce);
 
@@ -341,7 +360,7 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
           ) : (
             <>
               <span className="size-3.5 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-foreground" />
-              {anchorsMode ? `${lanes.length} Stellar anchors are bidding…` : market ? `${lanes.length} providers are bidding…` : "Providers are racing…"}
+              {anchorsMode ? `${lanes.length} ${currency === "MXN" ? "Stellar anchors" : "test providers"} are bidding…` : market ? `${lanes.length} providers are bidding…` : "Providers are racing…"}
             </>
           )}
         </span>
@@ -371,6 +390,7 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
             runKey={runKey}
             marketNum={marketNum}
             limitBps={limitBps}
+            currency={currency}
           />
         ))}
       </div>
@@ -378,15 +398,15 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
 
       <div className="mt-2.5 flex flex-wrap items-baseline justify-between gap-2 text-[0.8rem] text-muted-foreground">
         <span>
-          Finish line = market rate: <span className="money text-foreground">{formatMxn(marketLocal)}</span>
+          Finish line = market rate: <span className="money text-foreground">{local(marketLocal)}</span>
         </span>
         {finished && spread > 0 && (
           <motion.span initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="money text-good">
             {anchorsMode
-              ? `Best vs worst offer: ${mxn(spread)}`
+              ? `Best vs worst offer: ${cash(spread)}`
               : market
-                ? `Best vs worst provider today: ${mxn(spread)}`
-                : `Competition is worth ${mxn(spread)} to your family`}
+                ? `Best vs worst provider today: ${cash(spread)}`
+                : `Competition is worth ${cash(spread)} to your family`}
           </motion.span>
         )}
       </div>

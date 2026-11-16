@@ -19,7 +19,7 @@ export function LogoMark({ className }: { className?: string }) {
 
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("font-semibold tracking-tight", className)} style={{ fontFamily: '"Geist Variable", system-ui, sans-serif' }}>
+    <span className={cn("font-semibold tracking-tight", className)}>
       Rate<span className="text-brand">Race</span>
     </span>
   );

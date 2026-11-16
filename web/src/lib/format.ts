@@ -1,5 +1,5 @@
 // Plain-language messages for contract error codes (docs/BUILD_PLAN.md section 4.6).
-export { formatBps, formatMxn, formatUsd, fromUnits, toUnits } from "@raterace/shared";
+export { formatBps, formatLocal, formatMxn, formatUsd, fromUnits, toUnits } from "@raterace/shared";
 
 const MESSAGES: Record<number, string> = {
   6: "New transfers are paused for a moment. Please try again shortly.",

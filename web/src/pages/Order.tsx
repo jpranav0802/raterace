@@ -1,5 +1,5 @@
 // Order tracker (issue #19). Built from the components shown on /design.
-import { formatMxn, formatUsd, type OrderView } from "@raterace/shared";
+import { corridorById, currencyOf, formatLocal, formatUsd, type OrderView } from "@raterace/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
@@ -29,7 +29,7 @@ function proof(order: OrderView, event: string) {
 
 /** The transfer's story, in plain words, for whatever state it is in. */
 function buildSteps(order: OrderView, provider: string, now: number): Step[] {
-  const family = formatMxn(order.landedLocal);
+  const family = formatLocal(order.landedLocal, currencyOf(order.corridor));
   const locked: Step = {
     title: "Offer locked, your money is held safely",
     detail: proof(order, "awarded"),
@@ -266,13 +266,13 @@ export default function Order() {
     <div>
       <PageHeader
         title="Your transfer"
-        lead={`${formatUsd(order.sendUsdc)} to your family in Mexico, with ${provider}.`}
+        lead={`${formatUsd(order.sendUsdc)} to your family in ${corridorById(order.corridor)?.countryName ?? "Mexico"}, with ${provider}.`}
       />
 
       <Card className="mb-3">
         <p className="text-sm text-muted-foreground">Your family receives</p>
         <p className="money mt-1 text-[2.5rem] leading-none font-medium tracking-tight">
-          {formatMxn(order.landedLocal)}
+          {formatLocal(order.landedLocal, currencyOf(order.corridor))}
         </p>
       </Card>
 
@@ -288,7 +288,7 @@ export default function Order() {
         </p>
       )}
 
-      {familyLink && order.status === "Open" && !missedDeadline && <ShareWithFamily url={familyLink} />}
+      {familyLink && order.status === "Open" && !missedDeadline && <ShareWithFamily url={familyLink} spanish={corridorById(order.corridor)?.spanish ?? true} />}
       {familyLink && order.status === "Paid" && !order.familyAnswer && (
         <p className="mt-3 text-sm text-muted-foreground">
           Waiting for your family to say it arrived on their link. You can also confirm it yourself below.

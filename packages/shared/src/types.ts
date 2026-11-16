@@ -33,7 +33,10 @@ export interface RfqRequest {
 export interface RfqResponse {
   requestId: string;
   expiresAt: number;
-  oracle: { price: string; timestamp: number; mxnPerUsd: number };
+  /** `mxnPerUsd` is the local currency per 1 USD, whatever the currency (kept for older clients). */
+  oracle: { price: string; timestamp: number; mxnPerUsd: number; localPerUsd?: number };
+  corridor?: string;
+  assetCode?: string;
   onRampFeeUsd: string;
   quotes: RankedQuote[];
 }
@@ -80,6 +83,8 @@ export interface FamilyView {
   id: number;
   status: OrderStatus;
   landedLocal: string;
+  /** On-chain corridor id, e.g. "MX_SPEI": tells the page the currency and the payment rail. */
+  corridor: string;
   anchorName: string;
   payoutDeadline: number;
   challengeEnds: number;

@@ -1,6 +1,6 @@
 // Owner: Abhiraj (issue #18). Built from the components shown on /design.
 import { contract, rpc } from "@stellar/stellar-sdk";
-import { formatBps, formatMxn, formatUsd, hexToBytes, marketLocal, toUnits, type RankedQuote } from "@raterace/shared";
+import { formatBps, formatLocal, formatUsd, hexToBytes, marketLocal, toUnits, type RankedQuote } from "@raterace/shared";
 import { RateRaceClient, toContractQuote } from "@raterace/shared/chain";
 import { motion } from "motion/react";
 import { useCallback, useState } from "react";
@@ -110,6 +110,7 @@ async function lockOffer(
     standIn: standIn?.displayName,
     recipientName: t.recipientName,
     landedLocal: q.landedLocal,
+    currency: q.assetCode,
     sendUsdc: q.sendUsdc,
   };
   try {
@@ -118,7 +119,7 @@ async function lockOffer(
     info.payoutDeadline = Number(order.payout_deadline);
     chainlog.add({
       title: `${backer}'s bond: ${formatUsd(info.reservedBond)} USDC at stake`,
-      detail: `must deliver ${formatMxn(q.landedLocal)} within ${Math.max(0, info.payoutDeadline - Math.floor(Date.now() / 1000))} s or lose part of it`,
+      detail: `must deliver ${formatLocal(q.landedLocal, q.assetCode)} within ${Math.max(0, info.payoutDeadline - Math.floor(Date.now() / 1000))} s or lose part of it`,
     });
   } catch {
     // Not needed to continue; the celebration shows without the exact numbers.
@@ -155,6 +156,11 @@ export default function Quotes() {
 
   const rfq = transfer.rfq as RfqWithAudit;
   const { request } = transfer;
+  const currency = request.assetCode;
+  const local = (units: bigint | string) => formatLocal(units, currency);
+  /** Only Mexico's board names real Stellar anchors; other countries show labelled test providers. */
+  const realNames = request.corridor === "MX_SPEI";
+  const countryName = transfer.countryName ?? "Mexico";
   const send = BigInt(request.sendUsdc);
   const market = marketLocal(send, BigInt(rfq.oracle.price));
   const allowed = rfq.quotes.filter((q) => q.markupBps <= limitBps);
@@ -208,7 +214,7 @@ export default function Quotes() {
         at: Date.now(),
         recipientName: transfer.recipientName,
         country: transfer.country ?? "mx",
-        currency: transfer.currency ?? "MXN",
+        currency,
         sendUsdc: picked.sendUsdc,
         landedLocal: picked.landedLocal,
         provider: picked.displayName,
@@ -249,7 +255,9 @@ export default function Quotes() {
       <h1 className="mt-7 text-[1.9rem]">Choose an offer</h1>
       <p className="mt-2 mb-6 text-muted-foreground">
         {anchorsMode
-          ? `${rfq.audit?.length ?? 0} Stellar anchors that pay out in Mexico are bidding for this exact transfer, best first.`
+          ? realNames
+            ? `${rfq.audit?.length ?? 0} Stellar anchors that pay out in Mexico are bidding for this exact transfer, best first.`
+            : `${rfq.audit?.length ?? 0} test providers are bidding for this exact transfer to ${countryName}, best first.`
           : liveMode
             ? `Live prices from ${rfq.audit?.length ?? 0} providers for this exact transfer, best first.`
             : "Signed offers from licensed providers for this exact transfer, best first."}
@@ -263,6 +271,7 @@ export default function Quotes() {
         selectedId={picked.anchorName}
         onSelect={setSelectedId}
         limitBps={limitBps}
+        currency={currency}
       />
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm">
@@ -307,7 +316,14 @@ export default function Quotes() {
         )}
       </div>
 
-      {anchorsMode && (
+      {anchorsMode && !realNames && (
+        <p className="mt-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+          These are test providers with simulated prices, checked against the live {currency} market rate. No real
+          provider for {countryName} is connected, and no bank payout happens: on the Stellar test network, each price is
+          signed and backed by one of our test anchors.
+        </p>
+      )}
+      {anchorsMode && realNames && (
         <p className="mt-3 text-[0.72rem] leading-relaxed text-muted-foreground">
           Bitso, Koywe, Etherfuse, Alfred Pay and MoneyGram are real Stellar anchors that serve Mexico. Their prices here are
           simulated for this demo, not quotes from these companies, and they aren't RateRace partners. On the Stellar test
@@ -335,16 +351,16 @@ export default function Quotes() {
           lines={[
             { label: "You send", amount: formatUsd(send) },
             { label: "Sending fee", amount: formatUsd(toUnits(rfq.onRampFeeUsd)) },
-            { label: "At the market rate", amount: formatMxn(market) },
+            { label: "At the market rate", amount: local(market) },
             margin >= 0n
-              ? { label: `${picked.displayName}'s rate margin`, amount: `− ${formatMxn(margin)}`, kind: "minus" as const }
-              : { label: `${picked.displayName} pays above market`, amount: `+ ${formatMxn(-margin)}` },
+              ? { label: `${picked.displayName}'s rate margin`, amount: `− ${local(margin)}`, kind: "minus" as const }
+              : { label: `${picked.displayName} pays above market`, amount: `+ ${local(-margin)}` },
             ...(payoutFee > 0n || !liveMode
-              ? [{ label: feeLabel, amount: `− ${formatMxn(payoutFee)}`, kind: "minus" as const }]
+              ? [{ label: feeLabel, amount: `− ${local(payoutFee)}`, kind: "minus" as const }]
               : []),
           ]}
           totalLabel="Your family receives"
-          total={formatMxn(picked.landedLocal)}
+          total={local(picked.landedLocal)}
           note={
             standIn
               ? `Locked at ${picked.displayName}'s price. Your money is held until ${deliverer} pays your family; if it misses the deadline, you get it all back plus a penalty from its bond.`

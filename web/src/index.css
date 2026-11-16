@@ -1,13 +1,13 @@
 /*
   RateRace design system. Owner: Pranav. Reference page: /design
-  Black and grey, one typeface, few components. Colour is used only for meaning:
+  Black and grey, one typeface (Bricolage Grotesque), few components. Colour is used only for meaning:
   green = money that arrives / best offer, red = money lost / a problem.
   Token names follow shadcn/ui, so `npx shadcn@latest add <component>` drops in cleanly.
   A light variant exists: set <html data-theme="light">.
 */
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/bricolage-grotesque/opsz.css";
 
 :root {
   --background: #08090a;
@@ -87,7 +87,7 @@
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
 
-  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-sans: "Bricolage Grotesque Variable", system-ui, sans-serif;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -122,6 +122,13 @@
   :focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
+  }
+}
+
+/* The landing page's rate ticker: two copies of the row slide left by one copy's width. */
+@keyframes ticker {
+  to {
+    transform: translateX(-100%);
   }
 }
 
