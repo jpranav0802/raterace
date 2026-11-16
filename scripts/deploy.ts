@@ -244,27 +244,28 @@ async function main() {
   console.log(`   ${usdcId}`);
 
   step("Deploying mock oracle");
+  // Constructor arguments go after "--": deploying and initialising are one atomic step,
+  // so nobody can initialise the contract before we do.
   const oracleId = stellar([
     "contract", "deploy",
     "--wasm", resolve(WASM_DIR, "mock_oracle.wasm"),
     "--source-account", keys.ADMIN.secret(),
+    "--", "--admin", keys.ADMIN.publicKey(),
   ]).split("\n").pop()!.trim();
   console.log(`   ${oracleId}`);
-  invoke(oracleId, keys.ADMIN, "init", { admin: keys.ADMIN.publicKey() });
   invoke(oracleId, keys.ADMIN, "set_price", { asset: { Other: "MXN" }, price: MXN_PRICE });
   console.log(`   MXN price set to ${Number(MXN_PRICE) / 1e14} USD (${(1e14 / Number(MXN_PRICE)).toFixed(2)} MXN per USD)`);
 
   step("Deploying RateRace contract");
+  const config = { admin: keys.ADMIN.publicKey(), usdc: usdcId, oracle: oracleId, ...CONFIG };
   const rateraceId = stellar([
     "contract", "deploy",
     "--wasm", resolve(WASM_DIR, "raterace.wasm"),
     "--source-account", keys.ADMIN.secret(),
+    "--", "--config", JSON.stringify(config),
   ]).split("\n").pop()!.trim();
   console.log(`   ${rateraceId}`);
-  invoke(rateraceId, keys.ADMIN, "init", {
-    config: { admin: keys.ADMIN.publicKey(), usdc: usdcId, oracle: oracleId, ...CONFIG },
-  });
-  console.log("   initialised");
+  console.log("   deployed and initialised in one transaction");
 
   step("Anchors: register, bond, activate");
   for (const a of ANCHORS) {
