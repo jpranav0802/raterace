@@ -7,7 +7,8 @@ Built for the Blockchain Innovation Challenge powered by Stellar (Velocity, Univ
 | | |
 |---|---|
 | Live app | https://raterace-jpranav0802s-projects.vercel.app |
-| Devpost (pitch and demo video) | https://devpost.com/software/raterace |
+| Demo video (1 minute) | https://youtu.be/gljvHKSHINE |
+| Devpost | https://devpost.com/software/raterace |
 | Network | Stellar **testnet**. No real money moves. |
 
 ## Try it in two minutes
