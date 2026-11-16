@@ -1,7 +1,10 @@
-// The race. Each provider launches when its signed offer actually arrived (the router's
-// measured response time, slowed down so the eye can follow) and runs toward the finish
-// line: the market rate. The closer an offer gets to the market rate, the further it runs.
+// The race. Each bidder runs toward the finish line: the market rate. The closer an offer
+// gets to the market rate, the further it runs. Offers more than 3% below market are refused.
 // When everyone has finished, the lanes re-rank and the winner lights up.
+//
+// Market mode: the bidders are real providers at their live public prices; each allowed price
+// is signed and bonded on testnet by a test provider standing in (shown on the lane).
+// Simulated mode: the bidders are the test providers with their own prices.
 import { formatBps, formatMxn, type RankedQuote } from "@raterace/shared";
 import { Check, RotateCcw, ShieldCheck } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
@@ -19,9 +22,22 @@ function position(markupBps: number) {
   return Math.min(1, Math.max(0.03, 1 - markupBps / STRETCH_BPS));
 }
 
-/** Real response time -> launch delay on screen (x4, capped so a slow anchor doesn't stall the show). */
-function launchDelay(ms: number) {
-  return LAUNCH_BASE_MS + Math.min(1600, ms * 4);
+interface Lane {
+  id: string;
+  name: string;
+  quote?: RankedQuote;
+  audit?: AuditRow;
+  markupBps: number;
+  /** MXN, for the animation. */
+  landed: number;
+  /** Exact MXN units, for display. */
+  units?: string;
+}
+
+/** Launch delay: real response time (x4) in simulated mode; a gentle stagger in market mode. */
+function launchDelay(lane: Lane, index: number) {
+  if (lane.audit?.live) return LAUNCH_BASE_MS + index * 120;
+  return LAUNCH_BASE_MS + Math.min(1600, (lane.audit?.ms ?? 0) * 4);
 }
 
 const OUTCOME_TEXT: Record<AuditRow["outcome"], string> = {
@@ -30,7 +46,8 @@ const OUTCOME_TEXT: Record<AuditRow["outcome"], string> = {
   mismatch: "offer didn't match the request",
   "bad-signature": "signature didn't match its registered key",
   inactive: "provider is paused",
-  "over-cap": "over the 3% limit, disqualified",
+  "over-cap": "refused by the 3% rule",
+  "no-bond": "no test provider had bond left to back it",
   error: "didn't answer in time",
 };
 
@@ -61,17 +78,9 @@ function mxn(n: number) {
   return `MX$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-interface Lane {
-  id: string;
-  name: string;
-  quote?: RankedQuote;
-  audit?: AuditRow;
-  markupBps: number;
-  landed: number;
-}
-
 function LaneRow({
   lane,
+  index,
   best,
   finished,
   selected,
@@ -80,6 +89,7 @@ function LaneRow({
   marketNum,
 }: {
   lane: Lane;
+  index: number;
   best: boolean;
   finished: boolean;
   selected: boolean;
@@ -88,11 +98,26 @@ function LaneRow({
   marketNum: number;
 }) {
   const reduce = useReducedMotion();
-  const delay = launchDelay(lane.audit?.ms ?? 0);
+  const delay = launchDelay(lane, index);
   const valid = !!lane.quote;
+  const live = lane.audit?.live;
   const shown = useCountUp(lane.landed, marketNum * 0.9, delay, RUN_MS, runKey);
   const pos = position(lane.markupBps);
   const winner = finished && best;
+
+  const amount =
+    lane.landed > 0
+      ? finished || lane.landed - shown < 0.005
+        ? lane.units
+          ? formatMxn(lane.units)
+          : mxn(lane.landed)
+        : mxn(shown)
+      : "—";
+
+  let detail: string;
+  if (valid) detail = lane.markupBps < 0 ? "above the market rate" : `${formatBps(lane.markupBps)} below market`;
+  else if (lane.audit?.outcome === "over-cap") detail = `${formatBps(lane.markupBps)} below market · refused by the 3% rule`;
+  else detail = lane.audit ? OUTCOME_TEXT[lane.audit.outcome] : "no offer";
 
   return (
     <motion.button
@@ -104,8 +129,8 @@ function LaneRow({
       disabled={!valid}
       onClick={onSelect}
       className={cn(
-        "relative block w-full overflow-hidden px-5 py-4 text-left transition-colors",
-        valid ? (selected ? "bg-secondary" : "hover:bg-secondary/50") : "cursor-default opacity-60",
+        "relative block w-full overflow-hidden px-4 py-3 text-left transition-colors sm:px-5",
+        valid ? (selected ? "bg-secondary" : "hover:bg-secondary/50") : "cursor-default",
       )}
     >
       {winner && (
@@ -122,16 +147,19 @@ function LaneRow({
           aria-hidden="true"
           className={cn(
             "flex size-5 shrink-0 items-center justify-center rounded-full border",
-            selected ? "border-foreground" : "border-input",
+            !valid ? "border-transparent" : selected ? "border-foreground" : "border-input",
           )}
         >
           {selected && <span className="size-2.5 rounded-full bg-foreground" />}
         </span>
-        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 font-medium">
-          {lane.name}
+        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={cn("font-medium", !valid && "text-muted-foreground")}>{lane.name}</span>
+          {live?.type === "bank" && <span className="text-[0.7rem] text-muted-foreground">bank</span>}
           {winner && (
             <motion.span initial={reduce ? false : { scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-              <Badge variant="good" className="whitespace-nowrap">Best offer</Badge>
+              <Badge variant="good" className="whitespace-nowrap">
+                Best offer
+              </Badge>
             </motion.span>
           )}
         </span>
@@ -139,24 +167,20 @@ function LaneRow({
           className={cn(
             "money shrink-0 text-lg font-semibold tracking-tight transition-colors duration-500 sm:text-xl",
             winner && "text-good",
-            !valid && "text-bad line-through decoration-2",
+            !valid && "text-base font-medium text-bad/80 line-through decoration-1 sm:text-lg",
           )}
         >
-          {valid
-            ? finished || lane.landed - shown < 0.005
-              ? formatMxn(lane.quote!.landedLocal)
-              : mxn(shown)
-            : "—"}
+          {amount}
         </span>
       </div>
 
-      <div className="relative mt-3 ml-8">
+      <div className="relative mt-2.5 ml-8">
         <div className="relative h-1.5 rounded-full bg-border/70" aria-hidden="true">
           <motion.div
             key={runKey}
             className={cn(
               "absolute inset-y-0 left-0 rounded-full",
-              !valid ? "bg-bad/70" : winner ? "bg-good" : "bg-gradient-to-r from-foreground/10 to-foreground/70",
+              !valid ? "bg-bad/60" : winner ? "bg-good" : "bg-gradient-to-r from-foreground/10 to-foreground/70",
             )}
             initial={reduce ? false : { width: "0%" }}
             animate={{ width: `${pos * 100}%` }}
@@ -165,28 +189,23 @@ function LaneRow({
             <span
               className={cn(
                 "absolute top-1/2 -right-1.5 size-3 -translate-y-1/2 rounded-full",
-                !valid ? "bg-bad" : winner ? "bg-good shadow-[0_0_16px_4px] shadow-good/60" : "bg-foreground shadow-[0_0_12px_2px] shadow-foreground/40",
+                !valid
+                  ? "bg-bad"
+                  : winner
+                    ? "bg-good shadow-[0_0_16px_4px] shadow-good/60"
+                    : "bg-foreground shadow-[0_0_12px_2px] shadow-foreground/40",
               )}
             />
           </motion.div>
         </div>
-        <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-[0.78rem] text-muted-foreground">
-          <span className={cn("money", !valid && "text-bad")}>
-            {valid
-              ? `${formatBps(lane.markupBps)} below market`
-              : lane.audit
-                ? OUTCOME_TEXT[lane.audit.outcome]
-                : "no offer"}
-          </span>
-          {lane.audit && (
+        <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-[0.76rem] text-muted-foreground">
+          <span className={cn("money", !valid && "text-bad/90")}>{detail}</span>
+          {valid && lane.audit && (
             <span className="money inline-flex items-center gap-1">
-              {valid && <ShieldCheck className="size-3.5 text-good" />}
-              {valid ? `signed · answered in ${lane.audit.ms} ms` : `${lane.audit.ms} ms`}
-            </span>
-          )}
-          {lane.quote && !lane.audit && (
-            <span className="money">
-              {lane.quote.reputation.filled} delivered, {lane.quote.reputation.slashed} penalties
+              <ShieldCheck className="size-3.5 text-good" />
+              {lane.audit.standIn
+                ? `signed & bonded by test provider ${lane.audit.standIn.displayName}`
+                : `signed · answered in ${lane.audit.ms} ms`}
             </span>
           )}
         </div>
@@ -214,22 +233,31 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
   const lanes: Lane[] = useMemo(() => {
     const byName = new Map(quotes.map((q) => [q.anchorName, q]));
     const rows = audit?.length ? audit : quotes.map((q) => ({ name: q.anchorName, displayName: q.displayName }) as AuditRow);
+    const market = Number(marketLocal) / 1e7;
     return rows.map((a) => {
       const q = byName.get(a.name);
       const markupBps = q?.markupBps ?? a.markupBps ?? STRETCH_BPS;
+      // A refused live price still shows what it would have delivered.
+      const landed = q
+        ? Number(BigInt(q.landedLocal)) / 1e7
+        : a.live && a.markupBps !== undefined
+          ? market * (1 - a.markupBps / 10_000)
+          : 0;
       return {
         id: a.name,
         name: q?.displayName ?? a.displayName,
         quote: q,
         audit: audit?.length ? a : undefined,
         markupBps,
-        landed: q ? Number(BigInt(q.landedLocal)) / 1e7 : 0,
+        landed,
+        units: q?.landedLocal,
       };
     });
-  }, [quotes, audit]);
+  }, [quotes, audit, marketLocal]);
 
+  const market = lanes.some((l) => l.audit?.live);
   const bestId = quotes[0]?.anchorName;
-  const totalMs = Math.max(...lanes.map((l) => launchDelay(l.audit?.ms ?? 0))) + RUN_MS + 250;
+  const totalMs = Math.max(...lanes.map((l, i) => launchDelay(l, i))) + RUN_MS + 250;
   const slowestReal = Math.max(0, ...lanes.map((l) => l.audit?.ms ?? 0));
 
   useEffect(() => {
@@ -239,13 +267,16 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
     return () => clearTimeout(t);
   }, [raceId, runKey, totalMs, reduce]);
 
-  // While racing, lanes stay in a fixed order; at the finish they re-rank, best first.
+  // While racing, lanes stay in a fixed order; at the finish they re-rank, best first, refused last.
   const ordered = finished
-    ? [...lanes].sort((a, b) => (a.quote && b.quote ? b.landed - a.landed : a.quote ? -1 : b.quote ? 1 : 0))
+    ? [...lanes].sort((a, b) => (!!b.quote === !!a.quote ? b.landed - a.landed : a.quote ? -1 : 1))
     : lanes;
 
   const valid = lanes.filter((l) => l.quote);
-  const spread = valid.length > 1 ? Math.max(...valid.map((l) => l.landed)) - Math.min(...valid.map((l) => l.landed)) : 0;
+  const refused = lanes.filter((l) => l.audit?.outcome === "over-cap").length;
+  const shownLanes = lanes.filter((l) => l.landed > 0);
+  const spread =
+    shownLanes.length > 1 ? Math.max(...shownLanes.map((l) => l.landed)) - Math.min(...shownLanes.map((l) => l.landed)) : 0;
   const marketNum = Number(marketLocal) / 1e7;
 
   return (
@@ -255,8 +286,17 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
           {finished ? (
             <>
               <Check className="size-4 text-good" />
-              {valid.length} signed offers
-              {slowestReal > 0 && <span className="money">in {(slowestReal / 1000).toFixed(2)} s</span>}
+              {market ? (
+                <span>
+                  <span className="text-foreground">{valid.length} allowed</span> ·{" "}
+                  <span className="text-bad">{refused} refused by the 3% rule</span>
+                </span>
+              ) : (
+                <>
+                  {valid.length} signed offers
+                  {slowestReal > 0 && <span className="money">in {(slowestReal / 1000).toFixed(2)} s</span>}
+                </>
+              )}
             </>
           ) : (
             <>
@@ -264,7 +304,7 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
                 <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-70" />
                 <span className="relative inline-flex size-2 rounded-full bg-good" />
               </span>
-              Providers are racing…
+              {market ? `${lanes.length} providers are bidding…` : "Providers are racing…"}
             </>
           )}
         </span>
@@ -279,21 +319,20 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
         )}
       </div>
 
-      <div className="relative">
-        <div role="radiogroup" aria-label="Offers, best first" className="divide-y overflow-hidden rounded-xl border bg-card">
-          {ordered.map((lane) => (
-            <LaneRow
-              key={lane.id}
-              lane={lane}
-              best={lane.id === bestId}
-              finished={finished}
-              selected={lane.id === selectedId}
-              onSelect={() => lane.quote && onSelect?.(lane.id)}
-              runKey={runKey}
-              marketNum={marketNum}
-            />
-          ))}
-        </div>
+      <div role="radiogroup" aria-label="Offers, best first" className="divide-y overflow-hidden rounded-xl border bg-card">
+        {ordered.map((lane) => (
+          <LaneRow
+            key={lane.id}
+            lane={lane}
+            index={lanes.indexOf(lane)}
+            best={lane.id === bestId}
+            finished={finished}
+            selected={lane.id === selectedId}
+            onSelect={() => lane.quote && onSelect?.(lane.id)}
+            runKey={runKey}
+            marketNum={marketNum}
+          />
+        ))}
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-baseline justify-between gap-2 text-[0.8rem] text-muted-foreground">
@@ -301,12 +340,8 @@ export function RaceTrack({ quotes, audit, marketLocal, selectedId, onSelect, ra
           Finish line = market rate: <span className="money text-foreground">{formatMxn(marketLocal)}</span>
         </span>
         {finished && spread > 0 && (
-          <motion.span
-            initial={reduce ? false : { opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="money text-good"
-          >
-            Competition is worth {mxn(spread)} to your family
+          <motion.span initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="money text-good">
+            {market ? `Best vs worst provider today: ${mxn(spread)}` : `Competition is worth ${mxn(spread)} to your family`}
           </motion.span>
         )}
       </div>

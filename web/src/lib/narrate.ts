@@ -11,6 +11,7 @@ const REASON: Record<string, string> = {
   "bad-signature": "signature doesn't match its on-chain key, dropped",
   inactive: "provider is paused on-chain",
   "over-cap": "too far below the market rate, dropped",
+  "no-bond": "no test provider had bond left to back it",
   error: "didn't answer in time",
 };
 
@@ -21,6 +22,28 @@ export function narrateRfq(rfq: RfqWithAudit) {
     detail: `1 USD = ${rfq.oracle.mxnPerUsd.toFixed(4)} MXN · ${ageMin} min old (limit ${MAX_ORACLE_AGE_MIN})`,
   });
   const rows = rfq.audit ?? [];
+  if (rfq.mode === "market") {
+    chainlog.add({
+      title: `Live prices from ${rows.length} real providers`,
+      detail: `${rfq.source?.name ?? "Wise public comparison data"} · fee and rate margin included`,
+    });
+    for (const a of rows) {
+      const q = rfq.quotes.find((x) => x.anchorName === a.name);
+      if (q) {
+        chainlog.add({
+          title: `${a.displayName} bids ${formatMxn(q.landedLocal)}`,
+          detail: `${q.markupBps < 0 ? "above market" : `${formatBps(q.markupBps)} below market`} · signed & bonded by test provider ${a.standIn?.displayName} · signature ✓ on-chain key`,
+        });
+      } else {
+        chainlog.add({
+          title: `${a.displayName}: ${a.outcome === "over-cap" ? "refused by the 3% rule" : (REASON[a.outcome] ?? "no offer")}`,
+          detail: a.markupBps !== undefined ? `${formatBps(a.markupBps)} below market · limit 3.00%` : undefined,
+          status: "failed",
+        });
+      }
+    }
+    return;
+  }
   chainlog.add({
     title: `Asked ${rows.length || rfq.quotes.length} licensed providers for signed offers`,
     detail: "same request to everyone · 2 min to accept",

@@ -1,5 +1,5 @@
 // Owner: Abhiraj (issue #17). Built from the components shown on /design.
-import { ASSET_MXN, CORRIDOR_MX_SPEI, formatMxn, marketLocal, toUnits, type RfqRequest } from "@raterace/shared";
+import { ASSET_MXN, CORRIDOR_MX_SPEI, formatMxn, marketLocal, toUnits } from "@raterace/shared";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { AmountField } from "@/components/AmountField";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, type Market } from "@/lib/api";
+import { api, type Market, type RfqRequestWithMode } from "@/lib/api";
 import { chainlog } from "@/lib/chainlog";
 import { narrateRfq } from "@/lib/narrate";
 import { recipientHash, savePending, type PendingTransfer } from "@/lib/transfer";
@@ -94,7 +94,9 @@ export default function Send() {
       setBusy("Getting ready…");
       const kp = await ensureReady(units, setBusy);
       setBusy("Asking providers for offers…");
-      const request: RfqRequest = {
+      const request: RfqRequestWithMode = {
+        // Real providers' live prices bid (signed and bonded by test stand-ins on testnet).
+        mode: "market",
         corridor: CORRIDOR_MX_SPEI,
         assetCode: ASSET_MXN,
         sendUsdc: units.toString(),
@@ -129,8 +131,8 @@ export default function Send() {
     <form onSubmit={onSubmit} noValidate>
       <MarketPill market={market} />
       <PageHeader
-        title="Providers race to pay your family more."
-        lead="Licensed providers bid on every transfer. A smart contract checks each offer against the live market rate and holds your money until it's delivered."
+        title="Every provider bids. Your family gets the best one."
+        lead="Today's real prices from 10 providers compete for your transfer. A smart contract refuses any offer more than 3% below the live market rate and holds your money until it's delivered."
       />
 
       <Card className="flex flex-col gap-6">
@@ -142,7 +144,7 @@ export default function Send() {
             <span className="money font-medium text-foreground">
               {formatMxn(marketLocal(toUnits(amount), BigInt(market.price)))}
             </span>
-            . Providers race to get as close to this as they can.
+            . Providers compete to get as close to this as they can.
           </p>
         )}
         <div className="border-t" />

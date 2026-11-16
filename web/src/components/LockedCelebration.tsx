@@ -11,6 +11,8 @@ export interface LockedInfo {
   orderId: string;
   hash: string;
   provider: string;
+  /** Market mode: the test provider that signed and backs the real provider's price. */
+  standIn?: string;
   recipientName: string;
   landedLocal: string;
   sendUsdc: string;
@@ -81,7 +83,8 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.4 }}
         >
-          Offer locked with {info.provider} · Order #{info.orderId}
+          {info.standIn ? `Locked at ${info.provider}'s live price` : `Offer locked with ${info.provider}`} · Order #
+          {info.orderId}
         </motion.p>
         <motion.h2
           className="money mt-2 text-[2.6rem] leading-none font-semibold tracking-tight text-good"
@@ -104,7 +107,7 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           <Tile label="Network fees you paid" value="$0.00" tone="good" delay={0.75} />
           <Tile label="Held safely in escrow" value={`${usdc(info.sendUsdc)} USDC`} delay={0.85} />
           <Tile
-            label={`${info.provider}'s bond at stake`}
+            label={`${info.standIn ?? info.provider}'s bond at stake`}
             value={info.reservedBond ? `${usdc(info.reservedBond)} USDC` : "Reserved"}
             delay={0.95}
           />
@@ -131,7 +134,9 @@ export function LockedCelebration({ info }: { info: LockedInfo }) {
           animate={{ opacity: 1 }}
           transition={{ delay: 1.2 }}
         >
-          If {info.provider} misses the deadline, you get everything back plus a penalty from its bond.
+          {info.standIn
+            ? `Test provider ${info.standIn} stands in to deliver it. If it misses the deadline, you get everything back plus a penalty from its bond.`
+            : `If ${info.provider} misses the deadline, you get everything back plus a penalty from its bond.`}
         </motion.p>
 
         <motion.div

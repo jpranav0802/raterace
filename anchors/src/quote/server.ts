@@ -23,6 +23,20 @@ import { loadConfig, optionalEnv } from "@raterace/shared/node";
 import { PROFILES, type AnchorProfile } from "./config";
 
 const MAX_QUOTE_LIFETIME_S = 300;
+/**
+ * Demo "live market" mode (added by Abhiraj on the demo branch): the router asks this test
+ * anchor to stand in for a REAL provider and quote that provider's live public price
+ * (Wise comparison data). The anchor still signs, still needs free bond, and the contract
+ * still checks the price against the oracle. Turn off with ANCHOR_STAND_IN=0.
+ */
+const STAND_IN = optionalEnv("ANCHOR_STAND_IN", "1") !== "0";
+
+interface StandIn {
+  provider: string;
+  landed_local: string;
+  fee_local: string;
+  spread_bps: number;
+}
 const BPS = 10_000n;
 
 class QuoteError extends Error {
@@ -125,20 +139,35 @@ function startAnchor(profile: AnchorProfile) {
       if (!price) throw new QuoteError(503, "No market rate available");
 
       // ---- price it ----
-      const landed = landedLocal(sendUsdc, price.price, profile.spreadBps, profile.payoutFeeLocal);
+      const standIn = ext.stand_in as StandIn | undefined;
+      if (standIn && !STAND_IN) throw new QuoteError(400, "Stand-in quotes are turned off");
+      let landed: bigint;
+      let fees = { spreadBps: profile.spreadBps, payoutFeeLocal: profile.payoutFeeLocal.toString() };
+      if (standIn) {
+        if (typeof standIn.landed_local !== "string" || !/^\d+$/.test(standIn.landed_local)) {
+          throw new QuoteError(400, "stand_in.landed_local must be an integer string");
+        }
+        landed = BigInt(standIn.landed_local);
+        // Never sign something absurd: at most 5% above the market amount.
+        const market = (sendUsdc * 10n ** 14n) / price.price;
+        if (landed > (market * 105n) / 100n) throw new QuoteError(400, "stand_in price is not plausible");
+        fees = { spreadBps: Math.max(0, Math.round(Number(standIn.spread_bps) || 0)), payoutFeeLocal: String(standIn.fee_local ?? "0") };
+      } else {
+        landed = landedLocal(sendUsdc, price.price, profile.spreadBps, profile.payoutFeeLocal);
+      }
       if (landed <= 0n) throw new QuoteError(400, "Amount too small to cover the payout fee");
 
       const unsigned: Omit<QuoteJson, "signature"> = {
         anchor: address,
         anchorName: profile.name,
-        displayName: profile.displayName,
+        displayName: standIn ? String(standIn.provider) : profile.displayName,
         requestId: ext.request_id,
         corridor: CORRIDOR_MX_SPEI,
         assetCode: ASSET_MXN,
         sendUsdc: sendUsdc.toString(),
         landedLocal: landed.toString(),
         expiresAt,
-        fees: { spreadBps: profile.spreadBps, payoutFeeLocal: profile.payoutFeeLocal.toString() },
+        fees,
       };
 
       // ---- sign exactly what the contract will verify ----

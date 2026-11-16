@@ -1,10 +1,10 @@
 // What the Send page hands to the Quotes page. Owner: Abhiraj (#17, #18).
 // Kept in navigation state and mirrored to sessionStorage so a reload of /quotes still works.
-import type { RfqRequest, RfqResponse } from "@raterace/shared";
+import type { RfqRequestWithMode, RfqWithAudit } from "./api";
 
 export interface PendingTransfer {
-  request: RfqRequest;
-  rfq: RfqResponse;
+  request: RfqRequestWithMode;
+  rfq: RfqWithAudit;
   /** sha256(JSON.stringify({ name, clabe })), hex. The raw details never leave the browser. */
   recipientHash: string;
   recipientName: string;

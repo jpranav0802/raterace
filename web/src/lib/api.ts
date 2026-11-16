@@ -33,10 +33,20 @@ export interface AuditRow {
   displayName: string;
   /** How long the provider took to answer, ms. */
   ms: number;
-  outcome: "verified" | "no-quote" | "mismatch" | "bad-signature" | "inactive" | "over-cap" | "error";
+  outcome: "verified" | "no-quote" | "mismatch" | "bad-signature" | "inactive" | "over-cap" | "no-bond" | "error";
   markupBps?: number;
+  /** Market mode: the real provider's live public price this lane carries. */
+  live?: { type: string; feeUsd: number; rate: number; collectedAt: string };
+  /** Market mode: the registered test provider that signed and backs this price. */
+  standIn?: { name: string; displayName: string };
 }
-export type RfqWithAudit = RfqResponse & { audit?: AuditRow[] };
+export type RfqWithAudit = RfqResponse & {
+  audit?: AuditRow[];
+  mode?: "simulated" | "market";
+  source?: { name: string; url: string; oldestCollected?: string };
+};
+/** "market": real providers' live prices bid (signed by test stand-ins). */
+export type RfqRequestWithMode = RfqRequest & { mode?: "market" };
 
 export interface Market {
   price: string;
@@ -71,6 +81,6 @@ export const api = {
   market: () => call<Market>("/market"),
   fund: (publicKey: string) => call<{ ok: boolean; existed?: boolean; hash?: string }>("/onboard/fund", { publicKey }),
   usdc: (publicKey: string) => call<{ ok: boolean; hash?: string }>("/onboard/usdc", { publicKey }),
-  rfq: (req: RfqRequest) => call<RfqWithAudit>("/rfq", req),
+  rfq: (req: RfqRequestWithMode) => call<RfqWithAudit>("/rfq", req),
   submit: (xdr: string) => call<SubmitResponse>("/submit", { xdr }),
 };

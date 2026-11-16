@@ -2,16 +2,15 @@
 import { contract, rpc } from "@stellar/stellar-sdk";
 import { formatBps, formatMxn, formatUsd, hexToBytes, marketLocal, toUnits, type RankedQuote } from "@raterace/shared";
 import { RateRaceClient, toContractQuote } from "@raterace/shared/chain";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Countdown } from "@/components/Countdown";
 import { LockedCelebration, type LockedInfo } from "@/components/LockedCelebration";
 import { PageHeader } from "@/components/PageHeader";
 import { RaceTrack } from "@/components/RaceTrack";
-import { RealMarket } from "@/components/RealMarket";
 import { Receipt } from "@/components/Receipt";
 import { Button } from "@/components/ui/button";
-import { api, type Benchmarks, type RfqWithAudit } from "@/lib/api";
+import { api, type AuditRow, type RfqWithAudit } from "@/lib/api";
 import { chainlog } from "@/lib/chainlog";
 import { config } from "@/lib/config";
 import { errorMessage } from "@/lib/format";
@@ -35,7 +34,9 @@ class SendError extends Error {
   }
 }
 
-async function lockOffer(t: PendingTransfer, q: RankedQuote): Promise<LockedInfo> {
+async function lockOffer(t: PendingTransfer, q: RankedQuote, standIn?: AuditRow["standIn"]): Promise<LockedInfo> {
+  /** Who signed the price and whose bond backs it (the stand-in in market mode). */
+  const backer = standIn?.displayName ?? q.displayName;
   const kp = demoKeypair();
   const signer = contract.basicNodeSigner(kp, config.networkPassphrase);
   const client = new RateRaceClient({
@@ -68,7 +69,7 @@ async function lockOffer(t: PendingTransfer, q: RankedQuote): Promise<LockedInfo
   }
   chainlog.done(sim, {
     title: "Contract checks passed",
-    detail: `signature ✓ · market price fresh ✓ · ${formatBps(q.markupBps)} ≤ 3.00% ✓ · ${q.displayName}'s bond covers it ✓`,
+    detail: `signature ✓ · market price fresh ✓ · ${q.markupBps < 0 ? "above market" : `${formatBps(q.markupBps)} ≤ 3.00%`} ✓ · ${backer}'s bond covers it ✓`,
   });
 
   // 2. Signed here; the key never leaves this device.
@@ -97,6 +98,7 @@ async function lockOffer(t: PendingTransfer, q: RankedQuote): Promise<LockedInfo
     orderId: res.returnValue,
     hash: res.hash,
     provider: q.displayName,
+    standIn: standIn?.displayName,
     recipientName: t.recipientName,
     landedLocal: q.landedLocal,
     sendUsdc: q.sendUsdc,
@@ -106,7 +108,7 @@ async function lockOffer(t: PendingTransfer, q: RankedQuote): Promise<LockedInfo
     info.reservedBond = order.reserved_bond.toString();
     info.payoutDeadline = Number(order.payout_deadline);
     chainlog.add({
-      title: `${q.displayName}'s bond: ${formatUsd(info.reservedBond)} USDC at stake`,
+      title: `${backer}'s bond: ${formatUsd(info.reservedBond)} USDC at stake`,
       detail: `must deliver ${formatMxn(q.landedLocal)} within ${Math.max(0, info.payoutDeadline - Math.floor(Date.now() / 1000))} s or lose part of it`,
     });
   } catch {
@@ -128,23 +130,7 @@ export default function Quotes() {
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState<LockedInfo | null>(null);
 
-  const [benchmarks, setBenchmarks] = useState<Benchmarks | null>(null);
-
   const onExpire = useCallback(() => setExpired(true), []);
-
-  // Real providers' live prices for the same amount, for the comparison below the race.
-  const sendUsdc = transfer?.request.sendUsdc;
-  useEffect(() => {
-    if (!sendUsdc) return;
-    let alive = true;
-    api
-      .benchmarks(sendUsdc)
-      .then((b) => alive && setBenchmarks(b))
-      .catch(() => alive && setBenchmarks(null));
-    return () => {
-      alive = false;
-    };
-  }, [sendUsdc]);
 
   if (!transfer) {
     return (
@@ -163,7 +149,16 @@ export default function Quotes() {
   const market = marketLocal(send, BigInt(rfq.oracle.price));
   const picked = rfq.quotes.find((q) => q.anchorName === selectedId) ?? rfq.quotes[0];
   const payoutFee = BigInt(picked.fees.payoutFeeLocal);
-  const margin = market - payoutFee - BigInt(picked.landedLocal);
+  // Work in whole centavos as displayed, so the receipt lines add up exactly to the total.
+  const CENT = 100_000n;
+  const margin = ((market / CENT) - (payoutFee / CENT) - (BigInt(picked.landedLocal) / CENT)) * CENT;
+  const liveMode = rfq.mode === "market";
+  const pickedAudit = rfq.audit?.find((a) => a.name === picked.anchorName);
+  const standIn = pickedAudit?.standIn;
+  const feeLabel = liveMode
+    ? `${picked.displayName}'s fee${pickedAudit?.live ? ` ($${pickedAudit.live.feeUsd.toFixed(2)})` : ""}`
+    : "Bank payout fee";
+  const deliverer = standIn ? `test provider ${standIn.displayName}` : picked.displayName;
 
   async function refresh() {
     if (!transfer) return;
@@ -188,9 +183,9 @@ export default function Quotes() {
   async function lock() {
     if (!transfer || busy || expired) return;
     setError(null);
-    setBusy(`Locking ${picked.displayName}'s offer…`);
+    setBusy(`Locking ${picked.displayName}'s price…`);
     try {
-      const info = await lockOffer(transfer, picked);
+      const info = await lockOffer(transfer, picked, standIn);
       clearPending();
       setLocked(info);
     } catch (e) {
@@ -209,10 +204,18 @@ export default function Quotes() {
       <PageHeader
         title="The race is on"
         lead={
-          <>
-            Licensed providers compete to deliver the most pesos for{" "}
-            <span className="money text-foreground">{formatUsd(send)}</span> to {transfer.recipientName}.
-          </>
+          liveMode ? (
+            <>
+              Today's live prices from {rfq.audit?.length ?? 0} real providers compete to send{" "}
+              <span className="money text-foreground">{formatUsd(send)}</span> to {transfer.recipientName}. Anything more
+              than 3% below the market rate is refused.
+            </>
+          ) : (
+            <>
+              Licensed providers compete to deliver the most pesos for{" "}
+              <span className="money text-foreground">{formatUsd(send)}</span> to {transfer.recipientName}.
+            </>
+          )
         }
       />
 
@@ -235,13 +238,20 @@ export default function Quotes() {
         )}
       </div>
 
-      {benchmarks && benchmarks.providers.length > 0 && (
-        <div className="mt-6">
-          <RealMarket
-            data={benchmarks}
-            ours={{ provider: picked.displayName, landedLocal: picked.landedLocal, markupBps: picked.markupBps }}
-          />
-        </div>
+      {liveMode && (
+        <p className="mt-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+          Prices are each provider's live public quote for this amount, fee and exchange-rate margin included, from{" "}
+          {rfq.source ? (
+            <a href={rfq.source.url} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+              {rfq.source.name}
+            </a>
+          ) : (
+            "Wise's public comparison data"
+          )}
+          {rfq.source?.oldestCollected ? ` (collected since ${rfq.source.oldestCollected.slice(0, 10)})` : ""}. These companies
+          aren't part of RateRace: on the Stellar test network, each allowed price is signed and backed by one of our test
+          providers standing in for them.
+        </p>
       )}
 
       <div className="mt-6">
@@ -250,12 +260,20 @@ export default function Quotes() {
             { label: "You send", amount: formatUsd(send) },
             { label: "Sending fee", amount: formatUsd(toUnits(rfq.onRampFeeUsd)) },
             { label: "At the market rate", amount: formatMxn(market) },
-            { label: `${picked.displayName}'s rate margin`, amount: `− ${formatMxn(margin)}`, kind: "minus" },
-            { label: "Bank payout fee", amount: `− ${formatMxn(payoutFee)}`, kind: "minus" },
+            margin >= 0n
+              ? { label: `${picked.displayName}'s rate margin`, amount: `− ${formatMxn(margin)}`, kind: "minus" as const }
+              : { label: `${picked.displayName} pays above market`, amount: `+ ${formatMxn(-margin)}` },
+            ...(payoutFee > 0n || !liveMode
+              ? [{ label: feeLabel, amount: `− ${formatMxn(payoutFee)}`, kind: "minus" as const }]
+              : []),
           ]}
           totalLabel="Your family receives"
           total={formatMxn(picked.landedLocal)}
-          note={`Your money is held until ${picked.displayName} pays your family. If ${picked.displayName} misses the deadline, you get it all back plus a penalty.`}
+          note={
+            standIn
+              ? `Locked at ${picked.displayName}'s live price. Your money is held until ${deliverer} pays your family; if it misses the deadline, you get it all back plus a penalty from its bond.`
+              : `Your money is held until ${picked.displayName} pays your family. If ${picked.displayName} misses the deadline, you get it all back plus a penalty.`
+          }
         />
       </div>
 
@@ -272,7 +290,7 @@ export default function Quotes() {
           </Button>
         ) : (
           <Button size="lg" className="w-full" onClick={lock} disabled={!!busy} aria-busy={!!busy}>
-            {busy ?? `Send with ${picked.displayName}`}
+            {busy ?? (liveMode ? `Lock ${picked.displayName}'s price` : `Send with ${picked.displayName}`)}
           </Button>
         )}
       </div>
