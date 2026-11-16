@@ -31,7 +31,7 @@
   --good: #4ade80;
   --bad: #ff6b6b;
   /* Brand accent: orange, for the main action, selection and focus. Green and red keep their meaning. */
-  --brand: #ff7a1a;
+  --brand: #ef6c16;
   --brand-foreground: #1c0b00;
   --radius: 1rem;
   color-scheme: dark;
@@ -58,7 +58,7 @@
   --ring: #0a0a0a;
   --good: #15803d;
   --bad: #c62828;
-  --brand: #e8590c;
+  --brand: #d9480f;
   --brand-foreground: #ffffff;
   color-scheme: light;
 }

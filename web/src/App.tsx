@@ -2,6 +2,7 @@ import { formatUsd } from "@raterace/shared";
 import { Radio } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { LogoMark, Wordmark } from "@/components/Logo";
 import { OnStellarPanel, OnStellarSheet } from "@/components/OnStellar";
 import { networkView } from "@/lib/local";
 import { cn } from "@/lib/utils";
@@ -25,14 +26,9 @@ const LIVE_ROUTES = /^\/(send|quotes|order|activity)(\/|$)/;
 
 function Logo() {
   return (
-    <NavLink to="/send" className="flex items-center gap-2" aria-label="RateRace home">
-      <span className="flex size-7 items-center justify-center rounded-lg bg-brand text-brand-foreground">
-        <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
-          <path d="M4 16h9M4 11h13M4 6h16" strokeLinecap="round" />
-          <path d="M17 13l3 3-3 3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
-      <span className="text-[1.05rem] font-semibold tracking-tight">RateRace</span>
+    <NavLink to="/send" className="flex items-center gap-2.5" aria-label="RateRace home">
+      <LogoMark />
+      <Wordmark className="text-[1.15rem]" />
     </NavLink>
   );
 }
